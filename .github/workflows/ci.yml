@@ -24,6 +24,7 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - run: shellcheck -x -P SCRIPTDIR scripts/*.sh
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --locked
       - run: cargo doc --no-deps --locked

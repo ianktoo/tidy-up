@@ -8,23 +8,19 @@ Download the archive for your platform below, check it against `SHA256SUMS.txt`,
 | macOS Apple Silicon / Intel | `tidy-up-VERSION-aarch64-apple-darwin.tar.gz` / `...x86_64-apple-darwin.tar.gz` |
 | Linux x64 / static x64 / arm64 | `tidy-up-VERSION-x86_64-unknown-linux-gnu.tar.gz` / `...x86_64-unknown-linux-musl.tar.gz` / `...aarch64-unknown-linux-gnu.tar.gz` |
 
-**Add to PATH, Windows (PowerShell):**
+**Add to PATH: extract the archive and run the included script from that folder.** It installs for your user only, needs no admin rights, and can be undone.
 
 ```powershell
-$dir = "$env:LOCALAPPDATA\Programs\tidy-up"; New-Item -ItemType Directory -Force $dir | Out-Null
-Expand-Archive .\tidy-up-VERSION-x86_64-pc-windows-msvc.zip -DestinationPath "$env:TEMP\tidy-up-x" -Force
-Copy-Item "$env:TEMP\tidy-up-x\tidy-up-*\tidy-up.exe" $dir -Force
-$user = [Environment]::GetEnvironmentVariable("Path", "User")
-if (($user -split ';') -notcontains $dir) { [Environment]::SetEnvironmentVariable("Path", "$user;$dir".TrimStart(';'), "User") }
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File .\scripts\add-to-path.ps1
 ```
-
-**Add to PATH, macOS and Linux:**
 
 ```sh
-mkdir -p ~/.local/bin && tar xzf tidy-up-VERSION-*.tar.gz
-install -m 755 tidy-up-VERSION-*/tidy-up ~/.local/bin/tidy-up
-echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc   # or ~/.bashrc; skip if already on PATH
+# macOS and Linux
+sh scripts/add-to-path.sh
 ```
+
+To undo it, run `scripts\remove-from-path.ps1` or `scripts/remove-from-path.sh` the same way. Both scripts take a preview flag (`-WhatIf` / `--dry-run`).
 
 Open a **new terminal** and run `tidy-up --version`.
 

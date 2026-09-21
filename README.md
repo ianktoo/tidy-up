@@ -128,6 +128,8 @@ tidy-up organize ~/Downloads             # do it
 tidy-up restore  ~/Downloads             # change your mind
 ```
 
+Every release archive includes scripts that install `tidy-up`, put it on your PATH, and undo that again (`scripts/add-to-path.sh`, `scripts/add-to-path.ps1` and their `remove-from-path` counterparts).
+
 Or run `tidy-up` with no arguments for the interactive menu.
 
 ## Platforms

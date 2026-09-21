@@ -35,9 +35,58 @@ flag once: `xattr -d com.apple.quarantine /usr/local/bin/tidy-up`.
 
 ## Adding tidy-up to your PATH
 
-The archive contains a single executable. To run `tidy-up` from any folder, keep it in a directory
-that is on your `PATH`. These steps install for **your user only** and need no administrator rights.
-Replace the version and target in the file names with the ones you downloaded.
+To run `tidy-up` from any folder, the executable must be in a directory that is on your `PATH`. Every
+release archive contains the executable **and helper scripts** that do this for you and can undo it
+again. Everything installs for **your user only** and needs no administrator rights.
+
+### The easy way: the included scripts
+
+Extract the archive, open a terminal in the extracted folder, and run the script for your platform.
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\add-to-path.ps1
+```
+
+**macOS and Linux:**
+
+```sh
+sh scripts/add-to-path.sh
+```
+
+Then open a **new terminal** and run `tidy-up --version`.
+
+What each script does:
+
+| | Windows `add-to-path.ps1` | macOS / Linux `add-to-path.sh` |
+|---|---|---|
+| Installs the executable to | `%LOCALAPPDATA%\Programs\tidy-up` | `~/.local/bin` |
+| Puts it on PATH by | adding the folder to your **user** PATH in the registry (existing `%VARIABLES%` in it are preserved) | adding a marked block to your shell file (`~/.zshrc`, `~/.bashrc`, `~/.profile`, or fish's `conf.d`), only if the folder is not already on PATH |
+| Safe to run twice | yes | yes |
+| Preview only | `-WhatIf` | `--dry-run` |
+| Other options | `-InstallDir`, `-Binary`, `-Scope Process`, `-NoCopy` | `--dir`, `--binary`, `--shell`, `--no-rc` |
+
+**To undo it**, run the matching remove script from the same folder. It removes exactly what the add
+script added and nothing else:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\remove-from-path.ps1
+```
+
+```sh
+sh scripts/remove-from-path.sh
+```
+
+Both remove scripts also accept the preview flag (`-WhatIf` / `--dry-run`) and an option to keep the
+executable and remove only the PATH setup (`-KeepFiles` / `--keep-binary`). They never touch your files,
+other programs in the same folder, your own lines in your shell files, or the undo journals.
+
+The `-ExecutionPolicy Bypass` on Windows applies to that one command only. It is needed because the
+scripts are not code signed, and Windows blocks unsigned scripts by default. You can read them first:
+they are short, plain text, in the `scripts` folder.
+
+If you would rather do it by hand, the steps are below.
 
 ### Windows (PowerShell)
 
@@ -149,7 +198,8 @@ scheduled task, so there is nothing hidden to clean up.
    tidy-up purge   "C:\path\to\folder"           # or delete quarantined duplicates for good
    ```
 
-2. **Remove the program.**
+2. **Remove the program.** (The included `remove-from-path` script does this step and the next one in
+   one go; see [the easy way](#the-easy-way-the-included-scripts). The manual commands follow.)
 
    ```powershell
    Remove-Item "$env:LOCALAPPDATA\Programs\tidy-up" -Recurse          # Windows
