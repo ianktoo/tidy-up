@@ -346,7 +346,9 @@ mod tests {
         assert_eq!(scan(dir.path(), &options).unwrap().files.len(), 3);
     }
 
-    #[cfg(unix)]
+    /// Linux and friends allow any bytes in a file name. macOS (APFS and HFS+) rejects names that
+    /// are not valid UTF-8 outright, so this situation cannot arise there and the test cannot run.
+    #[cfg(all(unix, not(target_os = "macos")))]
     #[test]
     fn names_that_are_not_valid_utf8_are_skipped_not_mangled() {
         use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
