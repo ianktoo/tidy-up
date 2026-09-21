@@ -136,11 +136,7 @@ enum ContentId {
 
 /// Builds a [`Comparison`] from scanned `files` (tagged by `source`) and the duplicate `groups`
 /// found among them.
-pub fn compare(
-    folders: &[PathBuf],
-    files: &[FileEntry],
-    groups: &[DuplicateGroup],
-) -> Comparison {
+pub fn compare(folders: &[PathBuf], files: &[FileEntry], groups: &[DuplicateGroup]) -> Comparison {
     let mut group_of: HashMap<&Path, usize> = HashMap::new();
     for (i, group) in groups.iter().enumerate() {
         group_of.insert(group.keeper.as_path(), i);
@@ -283,9 +279,13 @@ mod tests {
                 write(dir.path(), rel, content);
             }
         }
-        let folders =
-            validate_folders(&dirs.iter().map(|d| d.path().to_path_buf()).collect::<Vec<_>>())
-                .unwrap();
+        let folders = validate_folders(
+            &dirs
+                .iter()
+                .map(|d| d.path().to_path_buf())
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
         let files = scan_folders(&folders, &IgnoreRules::new(), usize::MAX, |_, _| {}).unwrap();
         let groups = find_duplicates(&files, &NoProgress).groups;
         Setup {
@@ -333,10 +333,18 @@ mod tests {
     fn identical_folders_are_detected() {
         let both: &[(&str, &str)] = &[("a.txt", "AAAA"), ("sub/b.txt", "BBBB")];
         // same content, different names and layout
-        let s = setup(&[both, &[("renamed.txt", "AAAA"), ("other/place.txt", "BBBB")], both]);
+        let s = setup(&[
+            both,
+            &[("renamed.txt", "AAAA"), ("other/place.txt", "BBBB")],
+            both,
+        ]);
         let c = compare(&s.folders, &s.files, &s.groups);
         assert!(c.all_identical);
-        assert!(c.relations.iter().all(|(_, _, r)| *r == Relation::Identical));
+        assert!(
+            c.relations
+                .iter()
+                .all(|(_, _, r)| *r == Relation::Identical)
+        );
         assert_eq!(c.relations.len(), 3);
         assert!(c.folders.iter().all(|f| f.shared == 2 && f.unique == 0));
     }
@@ -344,10 +352,10 @@ mod tests {
     #[test]
     fn subset_overlap_and_disjoint_relations() {
         let s = setup(&[
-            &[("x", "XXXX"), ("y", "YYYY")],       // A
-            &[("x", "XXXX")],                      // B: subset of A
-            &[("y", "YYYY"), ("z", "ZZZZ")],       // C: overlaps A
-            &[("q", "QQQQ")],                      // D: disjoint from all
+            &[("x", "XXXX"), ("y", "YYYY")], // A
+            &[("x", "XXXX")],                // B: subset of A
+            &[("y", "YYYY"), ("z", "ZZZZ")], // C: overlaps A
+            &[("q", "QQQQ")],                // D: disjoint from all
         ]);
         let c = compare(&s.folders, &s.files, &s.groups);
         let rel = |i, j| c.relations.iter().find(|r| (r.0, r.1) == (i, j)).unwrap().2;
@@ -361,7 +369,12 @@ mod tests {
     #[test]
     fn stats_partition_files_into_unique_shared_and_local() {
         let s = setup(&[
-            &[("a", "SHARED"), ("b", "LOCAL!"), ("c", "LOCAL!"), ("d", "only-a")],
+            &[
+                ("a", "SHARED"),
+                ("b", "LOCAL!"),
+                ("c", "LOCAL!"),
+                ("d", "only-a"),
+            ],
             &[("e", "SHARED")],
         ]);
         let c = compare(&s.folders, &s.files, &s.groups);
@@ -392,7 +405,10 @@ mod tests {
         let s = setup(&[
             &[("keep.txt", "SAME"), ("only-a.txt", "AAAA")],
             &[("dup.txt", "SAME"), ("docs/only-b.txt", "BBBB")],
-            &[("docs/only-b.txt", "different-c"), ("copy-of-b.txt", "BBBB")],
+            &[
+                ("docs/only-b.txt", "different-c"),
+                ("copy-of-b.txt", "BBBB"),
+            ],
         ]);
         let plan = build_merge_plan(&s.folders, &s.files, &s.groups);
         let a = &s.folders[0];
@@ -404,7 +420,11 @@ mod tests {
         };
         // extra copies go to _Duplicates
         assert!(dest("dup.txt").unwrap().starts_with(a.join("_Duplicates")));
-        assert!(dest("copy-of-b.txt").unwrap().starts_with(a.join("_Duplicates")));
+        assert!(
+            dest("copy-of-b.txt")
+                .unwrap()
+                .starts_with(a.join("_Duplicates"))
+        );
         // the kept copy of the B/C-only content moves into the primary at its relative path
         assert_eq!(dest("only-b.txt"), Some(a.join("docs").join("only-b.txt")));
         // files already in the primary never move
@@ -428,7 +448,11 @@ mod tests {
         let aside = s.folders[0].join("_Duplicates");
         let (extra, gathered): (Vec<_>, Vec<_>) =
             plan.moves.iter().partition(|m| m.to.starts_with(&aside));
-        assert_eq!(gathered.len(), 1, "one copy of the shared content is gathered");
+        assert_eq!(
+            gathered.len(),
+            1,
+            "one copy of the shared content is gathered"
+        );
         assert_eq!(extra.len(), 1, "the other copy goes aside");
         assert_ne!(gathered[0].from, extra[0].from);
         assert!(gathered[0].to.starts_with(&s.folders[0]));

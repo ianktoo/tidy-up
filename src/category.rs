@@ -55,20 +55,35 @@ const TABLE: &[(Category, &[&str])] = &[
     ),
     (
         Category::Videos,
-        &["mp4", "mkv", "mov", "avi", "wmv", "flv", "webm", "m4v", "mpg", "mpeg", "3gp"],
+        &[
+            "mp4", "mkv", "mov", "avi", "wmv", "flv", "webm", "m4v", "mpg", "mpeg", "3gp",
+        ],
     ),
     (
         Category::Audio,
-        &["mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "aiff", "opus", "mid", "midi"],
+        &[
+            "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "aiff", "opus", "mid", "midi",
+        ],
     ),
-    (Category::Documents, &["pdf", "doc", "docx", "odt", "rtf", "pages", "tex"]),
-    (Category::Text, &["txt", "md", "markdown", "log", "rst", "nfo"]),
-    (Category::Spreadsheets, &["xls", "xlsx", "ods", "csv", "tsv", "numbers"]),
+    (
+        Category::Documents,
+        &["pdf", "doc", "docx", "odt", "rtf", "pages", "tex"],
+    ),
+    (
+        Category::Text,
+        &["txt", "md", "markdown", "log", "rst", "nfo"],
+    ),
+    (
+        Category::Spreadsheets,
+        &["xls", "xlsx", "ods", "csv", "tsv", "numbers"],
+    ),
     (Category::Presentations, &["ppt", "pptx", "odp", "key"]),
     (Category::Ebooks, &["epub", "mobi", "azw", "azw3", "djvu"]),
     (
         Category::Archives,
-        &["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "zst", "cab"],
+        &[
+            "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "zst", "cab",
+        ],
     ),
     (
         Category::Code,
@@ -81,18 +96,22 @@ const TABLE: &[(Category, &[&str])] = &[
     (
         Category::Models3D,
         &[
-            "stl", "obj", "fbx", "blend", "gltf", "glb", "3mf", "dae", "ply", "step", "stp",
-            "3ds", "skp", "iges", "igs", "usdz", "max", "c4d", "ma", "mb",
+            "stl", "obj", "fbx", "blend", "gltf", "glb", "3mf", "dae", "ply", "step", "stp", "3ds",
+            "skp", "iges", "igs", "usdz", "max", "c4d", "ma", "mb",
         ],
     ),
     (
         Category::Design,
-        &["psd", "ai", "xd", "fig", "sketch", "indd", "eps", "afdesign", "afphoto", "kra", "xcf"],
+        &[
+            "psd", "ai", "xd", "fig", "sketch", "indd", "eps", "afdesign", "afphoto", "kra", "xcf",
+        ],
     ),
     (Category::Fonts, &["ttf", "otf", "woff", "woff2", "fon"]),
     (
         Category::Installers,
-        &["exe", "msi", "dmg", "pkg", "deb", "rpm", "apk", "appimage", "iso", "img", "msix"],
+        &[
+            "exe", "msi", "dmg", "pkg", "deb", "rpm", "apk", "appimage", "iso", "img", "msix",
+        ],
     ),
     (
         Category::Data,
@@ -146,6 +165,14 @@ impl Category {
         }
     }
 
+    /// The lowercase extensions (no dot) that map to this category; empty for `Other`.
+    pub fn extensions(self) -> &'static [&'static str] {
+        TABLE
+            .iter()
+            .find(|(category, _)| *category == self)
+            .map_or(&[], |(_, exts)| *exts)
+    }
+
     /// Classifies a bare extension (with or without a leading dot, any case).
     pub fn from_extension(ext: &str) -> Category {
         let ext = ext.trim_start_matches('.').to_lowercase();
@@ -179,10 +206,19 @@ mod tests {
 
     #[test]
     fn classifies_paths() {
-        assert_eq!(Category::from_path(Path::new("a/b/report.PDF")), Category::Documents);
+        assert_eq!(
+            Category::from_path(Path::new("a/b/report.PDF")),
+            Category::Documents
+        );
         assert_eq!(Category::from_path(Path::new("Makefile")), Category::Other);
-        assert_eq!(Category::from_path(Path::new(".gitignore")), Category::Other);
-        assert_eq!(Category::from_path(Path::new("x.tar.gz")), Category::Archives);
+        assert_eq!(
+            Category::from_path(Path::new(".gitignore")),
+            Category::Other
+        );
+        assert_eq!(
+            Category::from_path(Path::new("x.tar.gz")),
+            Category::Archives
+        );
     }
 
     #[test]
@@ -192,6 +228,36 @@ mod tests {
             for e in *exts {
                 assert!(seen.insert(*e), "extension `{e}` appears twice");
                 assert_eq!(*e, e.to_lowercase(), "extensions must be lowercase");
+            }
+        }
+    }
+
+    #[test]
+    fn extensions_accessor_matches_classification() {
+        for category in Category::ALL {
+            for ext in category.extensions() {
+                assert_eq!(Category::from_extension(ext), category);
+            }
+        }
+        assert!(Category::Other.extensions().is_empty());
+        assert!(!Category::Images.extensions().is_empty());
+    }
+
+    /// `docs/file-types.md` is the user-facing list; it must never drift from the table.
+    #[test]
+    fn file_types_doc_lists_every_extension_and_folder() {
+        let doc = include_str!("../docs/file-types.md");
+        for category in Category::ALL {
+            assert!(
+                doc.contains(&format!("`{}/`", category.folder_name())),
+                "docs/file-types.md is missing the folder {}",
+                category.folder_name()
+            );
+            for ext in category.extensions() {
+                assert!(
+                    doc.contains(&format!("`{ext}`")),
+                    "docs/file-types.md is missing the extension `{ext}` ({category:?})"
+                );
             }
         }
     }

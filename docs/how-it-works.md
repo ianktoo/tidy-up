@@ -109,6 +109,36 @@ Delete is the one irreversible action and is deliberately not journaled. Right b
 removing a file it is re-hashed and compared with the group hash, and so is the kept copy;
 anything that changed since the scan is left alone and reported.
 
+## Analysis
+
+`analyze` is one metadata-only walk. Directory entries are collected per folder so project markers
+can be spotted before descending (which is how nested projects, such as packages inside `node_modules`,
+are attributed to the outermost project instead of being counted thousands of times). Symlinks are not
+followed. Memory stays bounded however large the tree is: the "largest" lists are fixed-size heaps
+ranked by `(size, path)`, so the result never depends on directory iteration order (which differs between
+Windows, macOS and Linux), and a candidate's path is only built once it is known to make the list.
+
+## Distribution
+
+`distribute` is three pure-ish steps: `collect_units` (reads the sources), `allocate` (no I/O), and
+`build_plan` (a normal `Plan` for the shared executor).
+
+`allocate` works in this order:
+
+1. **Capacity.** Each destination offers `available - reserve`, where the reserve is the larger of
+   `--min-free` and the space needed to stay under `--max-fill`. Destinations on one partition share a pool.
+2. **Selection.** Units are taken in `--prefer` order until `--limit` would be exceeded; a unit that does
+   not fit the remaining budget is skipped and smaller ones are still considered.
+3. **Targets.** A target number of bytes per destination comes from the strategy. Weighted strategies
+   (`ratio`, `free`, `even`) are water-filled: a destination that cannot absorb its proportional share is
+   capped and its overflow is shared by the rest. `fill` finds, by bisection, the common fill level `L` at
+   which filling every destination up to `L` of its partition absorbs exactly the amount being moved.
+4. **Placement.** Units are placed largest first, each on the eligible destination furthest below its
+   target that still has room. Anything that fits nowhere is reported, never forced.
+
+Because the allocator takes partition sizes as plain numbers, every "my three drives look like this"
+scenario is a fast unit test (see `disk::StaticDisks`).
+
 ## Resource use and progress
 
 - Hashing runs on at most `min(4, cores / 2)` threads, so the machine stays responsive.

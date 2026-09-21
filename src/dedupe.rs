@@ -82,7 +82,10 @@ impl DuplicateReport {
 
     /// Total bytes reclaimable by deleting every redundant copy.
     pub fn reclaimable_bytes(&self) -> u64 {
-        self.groups.iter().map(DuplicateGroup::reclaimable_bytes).sum()
+        self.groups
+            .iter()
+            .map(DuplicateGroup::reclaimable_bytes)
+            .sum()
     }
 }
 
@@ -156,20 +159,27 @@ pub fn find_duplicates(files: &[FileEntry], progress: &dyn HashProgress) -> Dupl
 
     let by_partial = collisions(partial.into_iter().map(|(f, h)| ((f.size, h), f)));
     let full_input: Vec<_> = by_partial.into_iter().flat_map(|(_, g)| g).collect();
-    let full = hash_stage(full_input, None, "Verifying", progress, &mut report.unreadable);
+    let full = hash_stage(
+        full_input,
+        None,
+        "Verifying",
+        progress,
+        &mut report.unreadable,
+    );
 
-    let mut groups: Vec<DuplicateGroup> = collisions(full.into_iter().map(|(f, h)| ((f.size, h), f)))
-        .into_iter()
-        .map(|((size, hash), mut members)| {
-            members.sort_by_key(|f| keeper_rank(f));
-            DuplicateGroup {
-                size,
-                hash,
-                keeper: members[0].path.clone(),
-                duplicates: members[1..].iter().map(|f| f.path.clone()).collect(),
-            }
-        })
-        .collect();
+    let mut groups: Vec<DuplicateGroup> =
+        collisions(full.into_iter().map(|(f, h)| ((f.size, h), f)))
+            .into_iter()
+            .map(|((size, hash), mut members)| {
+                members.sort_by_key(|f| keeper_rank(f));
+                DuplicateGroup {
+                    size,
+                    hash,
+                    keeper: members[0].path.clone(),
+                    duplicates: members[1..].iter().map(|f| f.path.clone()).collect(),
+                }
+            })
+            .collect();
 
     groups.sort_by(|a, b| {
         b.reclaimable_bytes()
@@ -187,7 +197,8 @@ fn keeper_rank(file: &FileEntry) -> (usize, usize, SystemTime, &Path) {
     (
         file.source,
         file.depth,
-        file.modified.unwrap_or(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(u32::MAX as u64)),
+        file.modified
+            .unwrap_or(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(u32::MAX as u64)),
         &file.path,
     )
 }
@@ -199,7 +210,9 @@ pub fn build_dedupe_plan(root: &Path, groups: &[DuplicateGroup]) -> Plan {
     for (index, group) in groups.iter().enumerate() {
         let folder = root.join(DUPLICATES_DIR).join(group_name(index));
         for path in &group.duplicates {
-            let Some(name) = path.file_name() else { continue };
+            let Some(name) = path.file_name() else {
+                continue;
+            };
             let to = unique_path(&folder.join(name), &reserved);
             reserved.insert(to.clone());
             moves.push(PlannedMove {
@@ -231,7 +244,9 @@ pub fn write_report(root: &Path, journal_id: &str, groups: &[DuplicateGroup]) ->
     let rel = |p: &Path| p.strip_prefix(root).unwrap_or(p).display().to_string();
     let mut text = String::from("tidy-up duplicate report\n========================\n\n");
     text.push_str("Each group lists the copy that was KEPT in place and the copies moved to\n");
-    text.push_str(&format!("{DUPLICATES_DIR}/<group>/. Review them, then run `tidy-up purge` to delete, or\n"));
+    text.push_str(&format!(
+        "{DUPLICATES_DIR}/<group>/. Review them, then run `tidy-up purge` to delete, or\n"
+    ));
     text.push_str("`tidy-up restore` to put everything back.\n\n");
     for (index, group) in groups.iter().enumerate() {
         text.push_str(&format!(
@@ -279,7 +294,9 @@ pub fn delete_duplicates(
             on_progress(done, total);
             done += 1;
             if !keeper_ok {
-                report.skipped.push((dup.clone(), "the kept copy is missing or changed".into()));
+                report
+                    .skipped
+                    .push((dup.clone(), "the kept copy is missing or changed".into()));
                 continue;
             }
             match hash_file(dup, None) {
@@ -290,7 +307,9 @@ pub fn delete_duplicates(
                     }
                     Err(e) => report.skipped.push((dup.clone(), e.to_string())),
                 },
-                Ok(_) => report.skipped.push((dup.clone(), "changed since the scan".into())),
+                Ok(_) => report
+                    .skipped
+                    .push((dup.clone(), "changed since the scan".into())),
                 Err(e) => report.skipped.push((dup.clone(), e.to_string())),
             }
         }
@@ -302,7 +321,9 @@ pub fn delete_duplicates(
 /// Sums file count and bytes inside the duplicates folder (0, 0 if absent).
 pub fn duplicates_folder_stats(root: &Path) -> (usize, u64) {
     fn walk(dir: &Path, acc: &mut (usize, u64)) {
-        let Ok(entries) = fs::read_dir(dir) else { return };
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
         for entry in entries.filter_map(|e| e.ok()) {
             match entry.metadata() {
                 Ok(m) if m.is_dir() => walk(&entry.path(), acc),
@@ -335,8 +356,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        scan::{ScanOptions, scan},
         rules::IgnoreRules,
+        scan::{ScanOptions, scan},
     };
 
     fn write(root: &Path, rel: &str, content: &[u8]) {
@@ -379,7 +400,11 @@ mod tests {
         b.push(2);
         write(dir.path(), "a.bin", &a);
         write(dir.path(), "b.bin", &b);
-        assert!(find_duplicates(&entries(dir.path()), &NoProgress).groups.is_empty());
+        assert!(
+            find_duplicates(&entries(dir.path()), &NoProgress)
+                .groups
+                .is_empty()
+        );
     }
 
     #[test]
@@ -387,7 +412,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "a", b"");
         write(dir.path(), "b", b"");
-        assert!(find_duplicates(&entries(dir.path()), &NoProgress).groups.is_empty());
+        assert!(
+            find_duplicates(&entries(dir.path()), &NoProgress)
+                .groups
+                .is_empty()
+        );
     }
 
     #[test]
@@ -463,8 +492,16 @@ mod tests {
         let report = find_duplicates(&entries(dir.path()), &NoProgress);
         let plan = build_dedupe_plan(dir.path(), &report.groups);
         assert_eq!(plan.moves.len(), 2);
-        assert!(plan.moves.iter().all(|m| m.to.starts_with(dir.path().join("_Duplicates/Group-001"))));
-        assert!(plan.moves.iter().all(|m| m.from != dir.path().join("a.txt")));
+        assert!(
+            plan.moves
+                .iter()
+                .all(|m| m.to.starts_with(dir.path().join("_Duplicates/Group-001")))
+        );
+        assert!(
+            plan.moves
+                .iter()
+                .all(|m| m.from != dir.path().join("a.txt"))
+        );
         let names: HashSet<_> = plan.moves.iter().map(|m| m.to.clone()).collect();
         assert_eq!(names.len(), 2, "same-named duplicates must not collide");
     }

@@ -30,11 +30,14 @@
 //! # Ok(()) }
 //! ```
 
+pub mod analyze;
 pub mod category;
 pub mod cli;
 pub mod commands;
 pub mod compare;
 pub mod dedupe;
+pub mod disk;
+pub mod distribute;
 pub mod error;
 pub mod executor;
 pub mod fsops;

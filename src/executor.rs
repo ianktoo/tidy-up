@@ -73,7 +73,9 @@ pub fn execute(
 
         // The destination may have appeared since planning; never overwrite.
         let dest = unique_path(&planned.to, &no_reservations);
-        let Some(parent) = dest.parent() else { continue };
+        let Some(parent) = dest.parent() else {
+            continue;
+        };
 
         let created = match create_dirs_tracked(parent) {
             Ok(created) => created,
@@ -137,10 +139,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("a.png"), "abc").unwrap();
         fs::write(dir.path().join("b.pdf"), "abc").unwrap();
-        let plan = plan_for(dir.path(), &[("a.png", "Images/a.png"), ("b.pdf", "Documents/b.pdf")]);
+        let plan = plan_for(
+            dir.path(),
+            &[("a.png", "Images/a.png"), ("b.pdf", "Documents/b.pdf")],
+        );
 
         let mut ticks = Vec::new();
-        let report = execute(&plan, Operation::Organize, |p| ticks.push((p.done, p.total))).unwrap();
+        let report = execute(&plan, Operation::Organize, |p| {
+            ticks.push((p.done, p.total))
+        })
+        .unwrap();
 
         assert_eq!((report.moved, report.bytes), (2, 6));
         assert!(report.failed.is_empty());
@@ -167,7 +175,10 @@ mod tests {
         fs::write(dir.path().join("real.txt"), "abc").unwrap();
         let plan = plan_for(
             dir.path(),
-            &[("ghost.txt", "Text Files/ghost.txt"), ("real.txt", "Text Files/real.txt")],
+            &[
+                ("ghost.txt", "Text Files/ghost.txt"),
+                ("real.txt", "Text Files/real.txt"),
+            ],
         );
         let report = execute(&plan, Operation::Organize, |_| {}).unwrap();
         assert_eq!(report.moved, 1);
@@ -183,8 +194,14 @@ mod tests {
         fs::write(dir.path().join("a.png"), "NEW").unwrap();
         let plan = plan_for(dir.path(), &[("a.png", "Images/a.png")]);
         execute(&plan, Operation::Organize, |_| {}).unwrap();
-        assert_eq!(fs::read_to_string(dir.path().join("Images/a.png")).unwrap(), "OLD");
-        assert_eq!(fs::read_to_string(dir.path().join("Images/a (1).png")).unwrap(), "NEW");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("Images/a.png")).unwrap(),
+            "OLD"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("Images/a (1).png")).unwrap(),
+            "NEW"
+        );
     }
 
     #[test]

@@ -180,16 +180,27 @@ mod tests {
 
     #[test]
     fn system_files_always_skipped() {
-        let rules = IgnoreRules::new().include_hidden(true).include_shortcuts(true);
-        assert_eq!(rules.check("desktop.ini", false), Some(SkipReason::SystemFile));
-        assert_eq!(rules.check("~$budget.xlsx", false), Some(SkipReason::SystemFile));
+        let rules = IgnoreRules::new()
+            .include_hidden(true)
+            .include_shortcuts(true);
+        assert_eq!(
+            rules.check("desktop.ini", false),
+            Some(SkipReason::SystemFile)
+        );
+        assert_eq!(
+            rules.check("~$budget.xlsx", false),
+            Some(SkipReason::SystemFile)
+        );
     }
 
     #[test]
     fn extension_rules_are_normalised_and_file_only() {
         let mut rules = IgnoreRules::new();
         rules.add_extension(".PDF");
-        assert!(matches!(rules.check("a.pdf", false), Some(SkipReason::Ignored(_))));
+        assert!(matches!(
+            rules.check("a.pdf", false),
+            Some(SkipReason::Ignored(_))
+        ));
         assert_eq!(rules.check("folder.pdf", true), None);
         assert_eq!(rules.check("a.doc", false), None);
     }
@@ -197,7 +208,15 @@ mod tests {
     #[test]
     fn ignore_file_entry_syntax() {
         let mut rules = IgnoreRules::new();
-        for line in ["# comment", "", "  .iso ", "*.tmp", "notes.txt", ".tar.gz", "Build*"] {
+        for line in [
+            "# comment",
+            "",
+            "  .iso ",
+            "*.tmp",
+            "notes.txt",
+            ".tar.gz",
+            "Build*",
+        ] {
             rules.add_entry(line);
         }
         assert!(rules.check("x.iso", false).is_some());

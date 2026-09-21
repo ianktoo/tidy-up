@@ -80,13 +80,14 @@ impl Plan {
         let mut groups: BTreeMap<String, (usize, u64)> = BTreeMap::new();
         for m in &self.moves {
             // Files landing directly in the root have no destination folder: group key "".
-            let folder = m
-                .to
-                .strip_prefix(&self.root)
-                .ok()
-                .filter(|rel| rel.components().count() > 1)
-                .and_then(|rel| rel.components().next())
-                .map_or_else(String::new, |c| c.as_os_str().to_string_lossy().into_owned());
+            let folder =
+                m.to.strip_prefix(&self.root)
+                    .ok()
+                    .filter(|rel| rel.components().count() > 1)
+                    .and_then(|rel| rel.components().next())
+                    .map_or_else(String::new, |c| {
+                        c.as_os_str().to_string_lossy().into_owned()
+                    });
             let entry = groups.entry(folder).or_default();
             entry.0 += 1;
             entry.1 += m.size;

@@ -2,7 +2,11 @@
 
 ## Install
 
-Requires a recent stable Rust toolchain (edition 2024, Rust 1.85+).
+**Prebuilt binary (Windows, macOS, Linux):** download the archive for your platform from the
+[Releases page](https://github.com/ianktoo/tidy-up/releases), extract it, and put `tidy-up` on your `PATH`.
+See [Platforms and installing](platforms.md) for checksums and per-platform notes.
+
+**From source:** requires a recent stable Rust toolchain (edition 2024, Rust 1.85+).
 
 ```sh
 git clone https://github.com/ianktoo/tidy-up.git tidy-up && cd tidy-up
@@ -94,6 +98,25 @@ tidy-up compare D:\Photos E:\PhotoBackup --action delete  # permanent, verified 
 ```
 
 List the folder you trust most first. Its copies are the ones that stay.
+
+**Which of my drives is full, and with what?**
+
+```sh
+tidy-up analyze D:\ E:\ F:\ --top 5
+tidy-up analyze D:\ --duplicates        # also measure duplicate waste
+tidy-up analyze D:\ --json > d-drive.json
+```
+
+**Free up a nearly-full drive by moving data to two others:**
+
+```sh
+tidy-up distribute --from D:\ --to E:\Archive F:\Archive -n                  # preview, equalising fill %
+tidy-up distribute --from D:\Media --to E:\M F:\M --ratio 60,40 --limit 200GiB   # 60/40, at most 200 GiB
+tidy-up distribute --from D:\ --to E:\Archive --prefer oldest --limit 100GiB  # archive the oldest 100 GiB
+tidy-up restore E:\Archive                                                     # undo
+```
+
+See [Distributing across partitions](distribute.md) for how ratios, limits and fill levels work.
 
 **Gather all repos into one folder:**
 

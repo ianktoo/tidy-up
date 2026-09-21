@@ -146,7 +146,12 @@ fn walk(dir: &Path, depth: usize, opts: &ScanOptions, out: &mut ScanResult) -> R
 
     for entry in entries {
         let path = entry.path();
-        let mut skip = |reason| out.skipped.push(Skipped { path: path.clone(), reason });
+        let mut skip = |reason| {
+            out.skipped.push(Skipped {
+                path: path.clone(),
+                reason,
+            })
+        };
 
         let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
             skip(SkipReason::UnsupportedName);
@@ -203,7 +208,7 @@ fn walk(dir: &Path, depth: usize, opts: &ScanOptions, out: &mut ScanResult) -> R
 }
 
 /// Dot-files everywhere, plus the HIDDEN/SYSTEM attributes on Windows.
-fn is_hidden(name: &str, meta: &Metadata) -> bool {
+pub(crate) fn is_hidden(name: &str, meta: &Metadata) -> bool {
     name.starts_with('.') || has_hidden_attribute(meta)
 }
 
@@ -252,7 +257,12 @@ mod tests {
         touch(dir.path(), "sub/b.txt");
         let result = scan(dir.path(), &opts(1)).unwrap();
         assert_eq!(names(&result), ["a.txt"]);
-        assert!(result.skipped.iter().any(|s| s.reason == SkipReason::Folder));
+        assert!(
+            result
+                .skipped
+                .iter()
+                .any(|s| s.reason == SkipReason::Folder)
+        );
     }
 
     #[test]

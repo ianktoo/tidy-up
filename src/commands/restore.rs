@@ -43,7 +43,13 @@ pub fn run(args: &RestoreArgs) -> Result<()> {
         return Ok(());
     }
     for mut journal in selected {
-        restore_one(&root, &mut journal, args.on_conflict, args.dry_run, args.yes)?;
+        restore_one(
+            &root,
+            &mut journal,
+            args.on_conflict,
+            args.dry_run,
+            args.yes,
+        )?;
     }
     if !active.is_empty() {
         ui::hint(&format!(
@@ -79,7 +85,9 @@ pub fn restore_one(
 
     let bar = ui::progress_bar(journal.records.len(), "Restoring");
     let options = RestoreOptions { conflict, dry_run };
-    let report = restore(root, journal, options, |done, _| bar.set_position(done as u64));
+    let report = restore(root, journal, options, |done, _| {
+        bar.set_position(done as u64)
+    });
     bar.finish_and_clear();
     print_report(root, &report?, dry_run);
     Ok(())
@@ -89,7 +97,10 @@ fn print_report(root: &Path, report: &RestoreReport, dry_run: bool) {
     let verb = if dry_run { "Would restore" } else { "Restored" };
     ui::success(&format!("{verb} {}", ui::plural(report.restored, "item")));
     if report.dirs_removed > 0 {
-        ui::info(&format!("Removed {} that tidy-up had created", ui::plural(report.dirs_removed, "empty folder")));
+        ui::info(&format!(
+            "Removed {} that tidy-up had created",
+            ui::plural(report.dirs_removed, "empty folder")
+        ));
     }
     if !report.renamed.is_empty() {
         ui::warn(&format!(
@@ -111,12 +122,19 @@ fn print_report(root: &Path, report: &RestoreReport, dry_run: bool) {
         ),
         (
             "failed",
-            report.failed.iter().map(|(p, why)| format!("{}: {why}", ui::rel(root, p))).collect(),
+            report
+                .failed
+                .iter()
+                .map(|(p, why)| format!("{}: {why}", ui::rel(root, p)))
+                .collect(),
         ),
     ];
     for (label, items) in problems.iter().filter(|(_, items)| !items.is_empty()) {
         ui::warn(&format!("{} {label}:", ui::plural(items.len(), "item")));
-        items.iter().take(DETAIL_LIMIT).for_each(|line| ui::hint(line));
+        items
+            .iter()
+            .take(DETAIL_LIMIT)
+            .for_each(|line| ui::hint(line));
         if items.len() > DETAIL_LIMIT {
             ui::hint(&format!("… and {} more", items.len() - DETAIL_LIMIT));
         }
