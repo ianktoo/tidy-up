@@ -75,6 +75,10 @@ jobs:
     needs: [prepare, build]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.tag }}
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -82,7 +86,7 @@ jobs:
 
       - name: Checksums
         working-directory: dist
-        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+        run: sha256sum -- *.zip *.tar.gz > SHA256SUMS.txt && cat SHA256SUMS.txt
 
       - name: Create the release if needed, then upload binaries
         env:
@@ -90,7 +94,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
+          # Install, PATH, upgrade and uninstall instructions first, then the generated changelog.
+          sed "s/VERSION/${TAG#v}/g" .github/release-notes.md > release-notes.md
           if ! gh release view "$TAG" > /dev/null 2>&1; then
-            gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file release-notes.md --generate-notes
           fi
           gh release upload "$TAG" dist/* --clobber

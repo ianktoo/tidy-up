@@ -61,6 +61,7 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then exe="tidy-up.exe"; fi
           cp "target/${{ matrix.target }}/release/$exe" "$name/"
           cp README.md LICENSE EULA.md "$name/"
+          cp -r scripts "$name/scripts"
           if [ "${{ matrix.archive }}" = "zip" ]; then
             7z a -tzip "$name.zip" "$name" > /dev/null
             echo "file=$name.zip" >> "$GITHUB_OUTPUT"

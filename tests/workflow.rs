@@ -842,3 +842,172 @@ fn analysis_of_a_real_tree_is_consistent_with_a_snapshot() {
     );
     assert!(report.disk.is_some());
 }
+
+// ---------------------------------------------------------------- simulated partition layouts
+
+/// The scenario from the feature request: three partitions that are almost full. The real
+/// folders live on one disk, but `StaticDisks` makes each destination look like its own
+/// partition with a chosen size and free space, so any layout can be tested on any machine.
+#[test]
+fn three_nearly_full_partitions_are_levelled_by_the_fill_strategy() {
+    use tidy_up::{disk::StaticDisks, distribute::projected_fill};
+
+    let base = tempfile::tempdir().unwrap();
+    let src = base.path().join("src");
+    for i in 0..12 {
+        write(&src, &format!("f{i:02}.dat"), &"x".repeat(50)); // 600 bytes in total
+    }
+    let (sources, dests) = validate_locations(
+        std::slice::from_ref(&src),
+        &[
+            base.path().join("A"),
+            base.path().join("B"),
+            base.path().join("C"),
+        ],
+    )
+    .unwrap();
+    // A is 90% full, B is 60% full, C is 30% full; each partition is 1000 bytes.
+    let disks = StaticDisks::new()
+        .with(dests[0].clone(), 1000, 100, "A")
+        .with(dests[1].clone(), 1000, 400, "B")
+        .with(dests[2].clone(), 1000, 700, "C");
+    let destinations = probe_destinations(&dests, &disks).unwrap();
+    let rules = IgnoreRules::new();
+    let collected = collect_units(
+        &sources,
+        &CollectOptions {
+            layout: Layout::Keep,
+            granularity: Granularity::Item,
+            rules: &rules,
+        },
+    )
+    .unwrap();
+    let limits = Limits {
+        max_fill: 0.95,
+        ..Default::default()
+    };
+    let allocation = allocate(
+        &collected.units,
+        &destinations,
+        &Strategy::Fill,
+        &limits,
+        Prefer::Largest,
+    )
+    .unwrap();
+
+    // Levelling 600 bytes: A (already 90%) gets nothing; B and C both end at 75%.
+    let counts: Vec<usize> = allocation.per_dest.iter().map(Vec::len).collect();
+    assert_eq!(counts, [0, 3, 9]);
+    let fill = projected_fill(&destinations, &allocation);
+    assert!((fill[0] - 0.90).abs() < 1e-9, "A is left alone: {fill:?}");
+    assert!(
+        (fill[1] - 0.75).abs() < 1e-9 && (fill[2] - 0.75).abs() < 1e-9,
+        "{fill:?}"
+    );
+    for (bytes, capacity) in allocation.bytes.iter().zip(&allocation.capacity) {
+        assert!(
+            bytes <= capacity,
+            "no destination may exceed its 95% ceiling"
+        );
+    }
+
+    // ...and the plan really moves the files, and restore really brings them back.
+    let before = snapshot(&src);
+    let plan = build_plan(&dests[0], &collected.units, &destinations, &allocation);
+    let report = execute(&plan, Operation::Distribute, |_| {}).unwrap();
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!(
+        (
+            files_under(&dests[0]),
+            files_under(&dests[1]),
+            files_under(&dests[2])
+        ),
+        (0, 3, 9)
+    );
+    let mut journal = Journal::find(&dests[0], &report.journal_id).unwrap();
+    restore(
+        &dests[0],
+        &mut journal,
+        RestoreOptions::default(),
+        |_, _| {},
+    )
+    .unwrap();
+    assert_eq!(snapshot(&src), before);
+}
+
+/// Every layout must respect every destination's ceiling, however lopsided.
+#[test]
+fn no_layout_of_partitions_can_push_a_destination_past_its_limit() {
+    use tidy_up::disk::StaticDisks;
+    let base = tempfile::tempdir().unwrap();
+    let src = base.path().join("src");
+    for i in 0..20 {
+        write(&src, &format!("f{i:02}.dat"), &"x".repeat(37));
+    }
+    let dest_names = ["A", "B", "C"];
+    let (sources, dests) = validate_locations(
+        std::slice::from_ref(&src),
+        &dest_names.map(|n| base.path().join(n)),
+    )
+    .unwrap();
+    let rules = IgnoreRules::new();
+    let collected = collect_units(
+        &sources,
+        &CollectOptions {
+            layout: Layout::Keep,
+            granularity: Granularity::Item,
+            rules: &rules,
+        },
+    )
+    .unwrap();
+
+    let layouts: [[(u64, u64); 3]; 5] = [
+        [(1000, 100), (1000, 400), (1000, 700)],
+        [(500, 10), (500, 10), (500, 10)],
+        [(10_000, 9_000), (100, 5), (100, 90)],
+        [(1000, 0), (1000, 0), (1000, 600)],
+        [(1000, 999), (1000, 999), (1000, 999)],
+    ];
+    let strategies = [
+        Strategy::Fill,
+        Strategy::FreeSpace,
+        Strategy::Even,
+        Strategy::Ratio(vec![5.0, 3.0, 2.0]),
+    ];
+    for layout in layouts {
+        let mut disks = StaticDisks::new();
+        for ((total, free), (dest, name)) in layout.iter().zip(dests.iter().zip(dest_names)) {
+            disks = disks.with(dest.clone(), *total, *free, name);
+        }
+        let destinations = probe_destinations(&dests, &disks).unwrap();
+        for strategy in &strategies {
+            for max_fill in [0.5, 0.9, 1.0] {
+                let limits = Limits {
+                    max_fill,
+                    ..Default::default()
+                };
+                let alloc = allocate(
+                    &collected.units,
+                    &destinations,
+                    strategy,
+                    &limits,
+                    Prefer::Largest,
+                )
+                .unwrap();
+                for (d, bytes) in alloc.bytes.iter().enumerate() {
+                    let space = &destinations[d].space;
+                    let used_after = space.used() + bytes;
+                    assert!(
+                        used_after as f64 <= max_fill * space.total as f64 + 1.0 || *bytes == 0,
+                        "{layout:?} {strategy:?} max_fill {max_fill}: destination {d} would be at \
+                         {used_after}/{}",
+                        space.total
+                    );
+                    assert!(*bytes <= alloc.capacity[d]);
+                }
+                let placed = alloc.unit_count() + alloc.unplaced.len() + alloc.over_limit.len();
+                assert_eq!(placed, collected.units.len(), "every unit is accounted for");
+            }
+        }
+    }
+}

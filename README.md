@@ -128,6 +128,8 @@ tidy-up organize ~/Downloads             # do it
 tidy-up restore  ~/Downloads             # change your mind
 ```
 
+Every release archive includes scripts that install `tidy-up`, put it on your PATH, and undo that again (`scripts/add-to-path.sh`, `scripts/add-to-path.ps1` and their `remove-from-path` counterparts).
+
 Or run `tidy-up` with no arguments for the interactive menu.
 
 ## Platforms
@@ -138,7 +140,7 @@ Or run `tidy-up` with no arguments for the interactive menu.
 | **macOS** | yes | yes (Apple Silicon) |
 | **Linux** | yes (glibc and static musl) | yes |
 
-CI runs the full test suite on Windows, macOS and Linux for every change, and every release ships prebuilt binaries with checksums.
+CI runs the full test suite on all six OS and CPU combinations (plus static musl, and the minimum Rust version) for every change, including real moves between two separate volumes on each OS. Every release ships prebuilt binaries with checksums. [Install, add to PATH, upgrade and uninstall](docs/platforms.md).
 
 ## Built like a library, shipped like a tool
 

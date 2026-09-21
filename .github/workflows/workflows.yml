@@ -1,0 +1,19 @@
+# Lints the workflow files themselves. A syntax error in a workflow makes GitHub reject the
+# whole file with no useful message, so catch it here first.
+name: Lint workflows
+
+on:
+  push:
+    paths: [".github/**"]
+  pull_request:
+    paths: [".github/**"]
+
+jobs:
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker://rhysd/actionlint:latest
+        with:
+          args: -color

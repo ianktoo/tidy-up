@@ -35,6 +35,17 @@ cargo test
 cargo doc --no-deps
 ```
 
+If you change anything under `.github/`, also lint the workflows. A single YAML mistake makes GitHub
+reject a whole workflow file with no useful message (an unquoted `: ` inside a step name is enough):
+
+```sh
+pip install actionlint-py && actionlint      # or: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint
+```
+
+The install scripts are linted too (`shellcheck -x -P SCRIPTDIR scripts/*.sh`). Keep them plain POSIX `sh` and
+ASCII only: they must run in dash and in macOS's old bash 3.2, and Windows PowerShell 5.1 misreads non-ASCII
+characters in scripts that have no byte order mark.
+
 ## Branches and pull requests
 
 | Branch | Purpose |
@@ -73,7 +84,10 @@ src/
 tests/
   workflow.rs     end-to-end library round trips on real temp dirs
   cli.rs          black-box tests of the compiled binary
+  scripts.rs      runs the install scripts in a sandbox (fake HOME on Unix, a scratch registry key on Windows)
 docs/             user documentation
+scripts/          install helpers shipped in every release: add-to-path and remove-from-path
+                  for Windows (.ps1) and macOS/Linux (.sh)
 ```
 
 The pipeline is `classify -> scan -> plan -> execute -> journal -> restore`. Plans are plain data,
@@ -108,6 +122,37 @@ on totals, volume ids and behaviour instead.
 
 Bump the format version in `journal.rs`, keep reading old versions, and add a test that loads a
 journal written by the previous version.
+
+## How platforms are tested
+
+You do not need three computers. Each kind of platform behaviour is covered the cheapest way that is
+still honest:
+
+| What | How | Where it runs |
+|---|---|---|
+| Logic that depends on partition sizes (ratios, fill levels, limits) | Pure functions plus `disk::StaticDisks`, which fakes any layout, such as three nearly full drives | Everywhere, including your laptop |
+| A rename that fails between partitions | `fsops::move_path_with` takes the rename as a parameter, so a test injects the failure | Everywhere |
+| Case-sensitive versus case-insensitive file systems | The test asks the file system what it does and asserts the property, not a fixed answer | Everywhere |
+| Windows attributes, Unix permissions, non-UTF-8 names, dotfiles | `#[cfg(windows)]` and `#[cfg(unix)]` tests | The matching OS |
+| Moving between two **real** volumes | `tests/cross_volume.rs`, which needs a folder on another volume in `TIDY_UP_OTHER_VOLUME` | CI on every OS, and locally if you have a second volume |
+| The install scripts | `tests/scripts.rs`: the shell scripts run under `sh` (dash on Ubuntu, bash 3.2 on macOS) in a fake `$HOME`; the PowerShell scripts run against a scratch registry key. Neither touches a real PATH | The matching OS |
+| The whole suite on each OS and CPU | CI matrix: Linux x64 and arm64, macOS Intel and Apple Silicon, Windows x64 and arm64, static musl, and the minimum Rust version (1.85) | CI |
+
+To run the real cross-volume tests yourself, point the variable at any folder on a different partition,
+and set the second variable to make a missing volume an error instead of a skip:
+
+```sh
+# Linux or WSL: /tmp and /dev/shm or your home directory are usually different volumes
+TIDY_UP_OTHER_VOLUME="$HOME/scratch" TIDY_UP_REQUIRE_CROSS_VOLUME=1 cargo test --test cross_volume
+```
+
+```powershell
+# Windows, with a second drive
+$env:TIDY_UP_OTHER_VOLUME = "D:\"; $env:TIDY_UP_REQUIRE_CROSS_VOLUME = "1"; cargo test --test cross_volume
+```
+
+On Windows you can also run the whole suite on real Linux with WSL, or in a container, without any CI
+round trip.
 
 ## Testing expectations
 
