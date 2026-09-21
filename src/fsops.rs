@@ -15,7 +15,10 @@ use crate::error::{Error, IoContext, Result};
 pub fn resolve_root(path: &Path) -> Result<PathBuf> {
     let canonical = fs::canonicalize(path).at(path)?;
     if !canonical.is_dir() {
-        return Err(Error::Invalid(format!("{} is not a folder", path.display())));
+        return Err(Error::Invalid(format!(
+            "{} is not a folder",
+            path.display()
+        )));
     }
     Ok(strip_verbatim(canonical))
 }
@@ -41,7 +44,9 @@ pub fn unique_path(desired: &Path, reserved: &HashSet<PathBuf>) -> PathBuf {
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let ext = desired.extension().map(|e| e.to_string_lossy().into_owned());
+    let ext = desired
+        .extension()
+        .map(|e| e.to_string_lossy().into_owned());
     let parent = desired.parent().unwrap_or(Path::new(""));
     (1u32..)
         .map(|n| match &ext {

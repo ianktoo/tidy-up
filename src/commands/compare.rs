@@ -129,7 +129,10 @@ fn choose_action(
         ));
     }
     if has_duplicates {
-        options.push((CompareAction::Delete, "Delete extra copies permanently".into()));
+        options.push((
+            CompareAction::Delete,
+            "Delete extra copies permanently".into(),
+        ));
     }
     println!();
     let labels: Vec<&str> = options.iter().map(|(_, label)| label.as_str()).collect();
@@ -159,7 +162,10 @@ fn apply_plan(
         return Ok(());
     }
     println!();
-    let prompt = format!("Apply these {}? (you can undo this)", ui::plural(plan.moves.len(), "move"));
+    let prompt = format!(
+        "Apply these {}? (you can undo this)",
+        ui::plural(plan.moves.len(), "move")
+    );
     if !ui::confirm(&prompt, true, args.yes)? {
         ui::info("Cancelled. Nothing was changed.");
         return Ok(());
@@ -283,7 +289,11 @@ fn label(folders: &[PathBuf], path: &Path) -> String {
 
 fn print_groups(folders: &[PathBuf], groups: &[DuplicateGroup], verbose: bool) {
     ui::heading("Duplicated content");
-    let shown = if verbose { groups.len() } else { GROUP_PREVIEW.min(groups.len()) };
+    let shown = if verbose {
+        groups.len()
+    } else {
+        GROUP_PREVIEW.min(groups.len())
+    };
     for (index, group) in groups.iter().take(shown).enumerate() {
         println!(
             "  {} {} x {}",
@@ -291,7 +301,11 @@ fn print_groups(folders: &[PathBuf], groups: &[DuplicateGroup], verbose: bool) {
             ui::plural(group.duplicates.len() + 1, "copy"),
             style(ui::format_size(group.size)).dim()
         );
-        println!("    {} {}", style("keep ").green(), label(folders, &group.keeper));
+        println!(
+            "    {} {}",
+            style("keep ").green(),
+            label(folders, &group.keeper)
+        );
         for dup in &group.duplicates {
             println!("    {} {}", style("extra").yellow(), label(folders, dup));
         }

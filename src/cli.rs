@@ -5,10 +5,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 
 use crate::{
-    compare::CompareAction,
-    plan::ProjectPolicy,
-    restore::ConflictPolicy,
-    rules::IgnoreRules,
+    compare::CompareAction, plan::ProjectPolicy, restore::ConflictPolicy, rules::IgnoreRules,
 };
 
 /// Top-level parser for the `tidy-up` command.
@@ -59,10 +56,20 @@ pub enum Command {
 #[derive(Debug, Args, Clone, Default)]
 pub struct FilterArgs {
     /// Extensions to ignore, comma-separated or repeated (e.g. `-x iso,tmp`).
-    #[arg(short = 'x', long = "ignore-ext", value_name = "EXT", value_delimiter = ',')]
+    #[arg(
+        short = 'x',
+        long = "ignore-ext",
+        value_name = "EXT",
+        value_delimiter = ','
+    )]
     pub ignore_ext: Vec<String>,
     /// Names or globs to ignore, comma-separated or repeated (e.g. `-i "*.bak,notes.txt"`).
-    #[arg(short = 'i', long = "ignore", value_name = "PATTERN", value_delimiter = ',')]
+    #[arg(
+        short = 'i',
+        long = "ignore",
+        value_name = "PATTERN",
+        value_delimiter = ','
+    )]
     pub ignore: Vec<String>,
     /// Text file with one ignore entry per line (may be repeated).
     #[arg(short = 'f', long = "ignore-file", value_name = "FILE")]
@@ -228,8 +235,18 @@ mod tests {
     #[test]
     fn organize_flags_parse() {
         let Some(Command::Organize(args)) = parse(&[
-            "organize", "D:/Downloads", "-x", "iso,tmp", "-i", "*.bak", "--depth", "3",
-            "--projects", "move", "-n", "--include-shortcuts",
+            "organize",
+            "D:/Downloads",
+            "-x",
+            "iso,tmp",
+            "-i",
+            "*.bak",
+            "--depth",
+            "3",
+            "--projects",
+            "move",
+            "-n",
+            "--include-shortcuts",
         ])
         .command
         else {
@@ -245,7 +262,9 @@ mod tests {
 
     #[test]
     fn defaults_are_safe() {
-        let Some(Command::Organize(args)) = parse(&["o"]).command else { panic!() };
+        let Some(Command::Organize(args)) = parse(&["o"]).command else {
+            panic!()
+        };
         assert_eq!(args.path, PathBuf::from("."));
         assert_eq!(args.depth, 1);
         assert_eq!(args.projects, ProjectPolicy::Keep);
@@ -259,16 +278,24 @@ mod tests {
 
     #[test]
     fn compare_takes_many_folders_and_an_action() {
-        let Some(Command::Compare(args)) =
-            parse(&["compare", "a", "b", "c", "--action", "merge", "-n", "-x", "tmp"]).command
+        let Some(Command::Compare(args)) = parse(&[
+            "compare", "a", "b", "c", "--action", "merge", "-n", "-x", "tmp",
+        ])
+        .command
         else {
             panic!("expected compare");
         };
-        assert_eq!(args.paths, [PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")]);
+        assert_eq!(
+            args.paths,
+            [PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")]
+        );
         assert_eq!(args.action, Some(CompareAction::Merge));
         assert!(args.dry_run && !args.yes);
         assert_eq!(args.filter.ignore_ext, ["tmp"]);
-        assert!(Cli::try_parse_from(["tidy-up", "compare"]).is_err(), "needs a folder");
+        assert!(
+            Cli::try_parse_from(["tidy-up", "compare"]).is_err(),
+            "needs a folder"
+        );
         assert!(Cli::try_parse_from(["tidy-up", "compare", "a", "--action", "shred"]).is_err());
     }
 
@@ -288,7 +315,10 @@ mod tests {
         assert!(rules.check("a.iso", false).is_some());
         assert!(rules.check("a.bak", false).is_some());
         assert!(rules.check("a.tar.gz", false).is_some());
-        assert!(rules.check("a.lnk", false).is_some(), "shortcuts skipped by default");
+        assert!(
+            rules.check("a.lnk", false).is_some(),
+            "shortcuts skipped by default"
+        );
         assert!(rules.check("a.txt", false).is_none());
     }
 

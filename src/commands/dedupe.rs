@@ -85,13 +85,20 @@ pub fn run(args: &DedupeArgs) -> Result<()> {
         ui::format_size(report.reclaimable_bytes())
     ));
     ui::hint(&format!("Full report: {}", report_path.display()));
-    ui::hint(&format!("Delete for good: tidy-up purge \"{}\"", root.display()));
+    ui::hint(&format!(
+        "Delete for good: tidy-up purge \"{}\"",
+        root.display()
+    ));
     Ok(())
 }
 
 fn print_groups(root: &std::path::Path, report: &DuplicateReport, verbose: bool) {
     ui::heading("Duplicates");
-    let shown = if verbose { report.groups.len() } else { GROUP_PREVIEW.min(report.groups.len()) };
+    let shown = if verbose {
+        report.groups.len()
+    } else {
+        GROUP_PREVIEW.min(report.groups.len())
+    };
     for (index, group) in report.groups.iter().take(shown).enumerate() {
         println!(
             "  {} {} × {}",
@@ -99,7 +106,11 @@ fn print_groups(root: &std::path::Path, report: &DuplicateReport, verbose: bool)
             ui::plural(group.duplicates.len() + 1, "copy"),
             style(ui::format_size(group.size)).dim()
         );
-        println!("    {} {}", style("keep").green(), ui::rel(root, &group.keeper));
+        println!(
+            "    {} {}",
+            style("keep").green(),
+            ui::rel(root, &group.keeper)
+        );
         for dup in &group.duplicates {
             println!("    {} {}", style("move").yellow(), ui::rel(root, dup));
         }
@@ -140,6 +151,10 @@ pub fn purge(args: &PurgeArgs) -> Result<()> {
         return Ok(());
     }
     let (files, bytes) = purge_duplicates(&root)?;
-    ui::success(&format!("Deleted {}, freed {}", ui::plural(files, "file"), ui::format_size(bytes)));
+    ui::success(&format!(
+        "Deleted {}, freed {}",
+        ui::plural(files, "file"),
+        ui::format_size(bytes)
+    ));
     Ok(())
 }

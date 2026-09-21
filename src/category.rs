@@ -55,20 +55,35 @@ const TABLE: &[(Category, &[&str])] = &[
     ),
     (
         Category::Videos,
-        &["mp4", "mkv", "mov", "avi", "wmv", "flv", "webm", "m4v", "mpg", "mpeg", "3gp"],
+        &[
+            "mp4", "mkv", "mov", "avi", "wmv", "flv", "webm", "m4v", "mpg", "mpeg", "3gp",
+        ],
     ),
     (
         Category::Audio,
-        &["mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "aiff", "opus", "mid", "midi"],
+        &[
+            "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "aiff", "opus", "mid", "midi",
+        ],
     ),
-    (Category::Documents, &["pdf", "doc", "docx", "odt", "rtf", "pages", "tex"]),
-    (Category::Text, &["txt", "md", "markdown", "log", "rst", "nfo"]),
-    (Category::Spreadsheets, &["xls", "xlsx", "ods", "csv", "tsv", "numbers"]),
+    (
+        Category::Documents,
+        &["pdf", "doc", "docx", "odt", "rtf", "pages", "tex"],
+    ),
+    (
+        Category::Text,
+        &["txt", "md", "markdown", "log", "rst", "nfo"],
+    ),
+    (
+        Category::Spreadsheets,
+        &["xls", "xlsx", "ods", "csv", "tsv", "numbers"],
+    ),
     (Category::Presentations, &["ppt", "pptx", "odp", "key"]),
     (Category::Ebooks, &["epub", "mobi", "azw", "azw3", "djvu"]),
     (
         Category::Archives,
-        &["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "zst", "cab"],
+        &[
+            "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "zst", "cab",
+        ],
     ),
     (
         Category::Code,
@@ -81,18 +96,22 @@ const TABLE: &[(Category, &[&str])] = &[
     (
         Category::Models3D,
         &[
-            "stl", "obj", "fbx", "blend", "gltf", "glb", "3mf", "dae", "ply", "step", "stp",
-            "3ds", "skp", "iges", "igs", "usdz", "max", "c4d", "ma", "mb",
+            "stl", "obj", "fbx", "blend", "gltf", "glb", "3mf", "dae", "ply", "step", "stp", "3ds",
+            "skp", "iges", "igs", "usdz", "max", "c4d", "ma", "mb",
         ],
     ),
     (
         Category::Design,
-        &["psd", "ai", "xd", "fig", "sketch", "indd", "eps", "afdesign", "afphoto", "kra", "xcf"],
+        &[
+            "psd", "ai", "xd", "fig", "sketch", "indd", "eps", "afdesign", "afphoto", "kra", "xcf",
+        ],
     ),
     (Category::Fonts, &["ttf", "otf", "woff", "woff2", "fon"]),
     (
         Category::Installers,
-        &["exe", "msi", "dmg", "pkg", "deb", "rpm", "apk", "appimage", "iso", "img", "msix"],
+        &[
+            "exe", "msi", "dmg", "pkg", "deb", "rpm", "apk", "appimage", "iso", "img", "msix",
+        ],
     ),
     (
         Category::Data,
@@ -179,10 +198,19 @@ mod tests {
 
     #[test]
     fn classifies_paths() {
-        assert_eq!(Category::from_path(Path::new("a/b/report.PDF")), Category::Documents);
+        assert_eq!(
+            Category::from_path(Path::new("a/b/report.PDF")),
+            Category::Documents
+        );
         assert_eq!(Category::from_path(Path::new("Makefile")), Category::Other);
-        assert_eq!(Category::from_path(Path::new(".gitignore")), Category::Other);
-        assert_eq!(Category::from_path(Path::new("x.tar.gz")), Category::Archives);
+        assert_eq!(
+            Category::from_path(Path::new(".gitignore")),
+            Category::Other
+        );
+        assert_eq!(
+            Category::from_path(Path::new("x.tar.gz")),
+            Category::Archives
+        );
     }
 
     #[test]

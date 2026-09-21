@@ -168,7 +168,9 @@ mod tests {
                 .collect(),
             skipped: vec![],
         };
-        let id = execute(&plan, Operation::Organize, |_| {}).unwrap().journal_id;
+        let id = execute(&plan, Operation::Organize, |_| {})
+            .unwrap()
+            .journal_id;
         (dir, id)
     }
 
@@ -188,7 +190,10 @@ mod tests {
         assert_eq!(report.dirs_removed, 2);
         assert!(report.is_clean());
         assert_eq!(fs::read_to_string(dir.path().join("a.png")).unwrap(), "1");
-        assert_eq!(fs::read_to_string(dir.path().join("sub/b.pdf")).unwrap(), "2");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("sub/b.pdf")).unwrap(),
+            "2"
+        );
         assert!(!dir.path().join("Images").exists());
         assert!(!dir.path().join("Documents").exists());
         assert!(Journal::find(dir.path(), &id).unwrap().is_restored());
@@ -208,7 +213,14 @@ mod tests {
     #[test]
     fn dry_run_changes_nothing() {
         let (dir, id) = organized(&[("a.png", "1")], &[("a.png", "Images/a.png")]);
-        let report = run(dir.path(), &id, RestoreOptions { dry_run: true, ..Default::default() });
+        let report = run(
+            dir.path(),
+            &id,
+            RestoreOptions {
+                dry_run: true,
+                ..Default::default()
+            },
+        );
         assert_eq!(report.restored, 1);
         assert!(dir.path().join("Images/a.png").exists());
         assert!(!Journal::find(dir.path(), &id).unwrap().is_restored());
@@ -220,15 +232,24 @@ mod tests {
         fs::write(dir.path().join("a.png"), "newcomer").unwrap();
         let report = run(dir.path(), &id, RestoreOptions::default());
         assert_eq!(report.renamed.len(), 1);
-        assert_eq!(fs::read_to_string(dir.path().join("a.png")).unwrap(), "newcomer");
-        assert_eq!(fs::read_to_string(dir.path().join("a (1).png")).unwrap(), "moved");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("a.png")).unwrap(),
+            "newcomer"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("a (1).png")).unwrap(),
+            "moved"
+        );
     }
 
     #[test]
     fn conflict_skip_leaves_file_and_keeps_journal_active() {
         let (dir, id) = organized(&[("a.png", "moved")], &[("a.png", "Images/a.png")]);
         fs::write(dir.path().join("a.png"), "newcomer").unwrap();
-        let options = RestoreOptions { conflict: ConflictPolicy::Skip, dry_run: false };
+        let options = RestoreOptions {
+            conflict: ConflictPolicy::Skip,
+            dry_run: false,
+        };
         let report = run(dir.path(), &id, options);
         assert_eq!(report.conflicts.len(), 1);
         assert!(dir.path().join("Images/a.png").exists());
@@ -272,7 +293,9 @@ mod tests {
             }],
             skipped: vec![],
         };
-        let active = execute(&plan, Operation::Organize, |_| {}).unwrap().journal_id;
+        let active = execute(&plan, Operation::Organize, |_| {})
+            .unwrap()
+            .journal_id;
         assert_eq!(forget_restored(dir.path()).unwrap(), 1);
         let left = Journal::load_all(dir.path()).unwrap();
         assert_eq!(left.len(), 1);

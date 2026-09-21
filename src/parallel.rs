@@ -35,7 +35,10 @@ where
                     let index = next.fetch_add(1, Ordering::Relaxed);
                     let Some(item) = items.get(index) else { break };
                     let value = f(item);
-                    results.lock().expect("worker panicked").push((index, value));
+                    results
+                        .lock()
+                        .expect("worker panicked")
+                        .push((index, value));
                 }
             });
         }

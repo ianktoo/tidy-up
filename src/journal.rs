@@ -165,7 +165,10 @@ impl JournalWriter {
     /// an absolute path onto the root at restore time yields that path unchanged.
     fn relative(&self, path: &Path) -> Result<PathBuf> {
         if !path.is_absolute() {
-            return Err(Error::Invalid(format!("{} is not an absolute path", path.display())));
+            return Err(Error::Invalid(format!(
+                "{} is not an absolute path",
+                path.display()
+            )));
         }
         Ok(path.strip_prefix(&self.root).unwrap_or(path).to_path_buf())
     }
@@ -244,8 +247,11 @@ impl Journal {
         // Sort by creation order, not filename: `<id>-2.jsonl` sorts *before* `<id>.jsonl`.
         // Within one second a longer id is a later collision suffix (`-2`, `-3`, ... `-10`).
         journals.sort_by(|a, b| {
-            (a.header.created_at, a.header.id.len(), &a.header.id)
-                .cmp(&(b.header.created_at, b.header.id.len(), &b.header.id))
+            (a.header.created_at, a.header.id.len(), &a.header.id).cmp(&(
+                b.header.created_at,
+                b.header.id.len(),
+                &b.header.id,
+            ))
         });
         Ok(journals)
     }
@@ -262,7 +268,9 @@ impl Journal {
         match matches.len() {
             1 => Ok(matches.remove(0)),
             0 => Err(Error::Invalid(format!("no journal matching `{id}`"))),
-            n => Err(Error::Invalid(format!("`{id}` is ambiguous ({n} journals match)"))),
+            n => Err(Error::Invalid(format!(
+                "`{id}` is ambiguous ({n} journals match)"
+            ))),
         }
     }
 
@@ -323,7 +331,8 @@ mod tests {
         )
         .unwrap();
 
-        let journal = Journal::load(&journal_dir(dir.path()).join(format!("{}.jsonl", w.id()))).unwrap();
+        let journal =
+            Journal::load(&journal_dir(dir.path()).join(format!("{}.jsonl", w.id()))).unwrap();
         assert_eq!(journal.header.operation, Operation::Organize);
         assert_eq!(journal.move_count(), 1);
         let (from, to, kind) = journal.moves().next().unwrap();
@@ -338,8 +347,12 @@ mod tests {
         let dir = root();
         let other = root();
         let mut w = JournalWriter::create(dir.path(), Operation::Compare).unwrap();
-        w.record_move(&other.path().join("x"), &dir.path().join("y"), MoveKind::File)
-            .unwrap();
+        w.record_move(
+            &other.path().join("x"),
+            &dir.path().join("y"),
+            MoveKind::File,
+        )
+        .unwrap();
         let j = Journal::find(dir.path(), w.id()).unwrap();
         let (from, to, _) = j.moves().next().unwrap();
         assert_eq!(from, other.path().join("x"), "outside paths stay absolute");
@@ -347,7 +360,10 @@ mod tests {
         // joining an absolute path onto the root gives it back unchanged (used by restore)
         assert_eq!(dir.path().join(from), other.path().join("x"));
 
-        assert!(w.record_move(Path::new("rel"), &dir.path().join("y"), MoveKind::File).is_err());
+        assert!(
+            w.record_move(Path::new("rel"), &dir.path().join("y"), MoveKind::File)
+                .is_err()
+        );
     }
 
     #[test]
@@ -364,7 +380,12 @@ mod tests {
         let dir = root();
         // Enough writers to reach a two-digit suffix (`-10`), which also breaks naive sorting.
         let created: Vec<String> = (0..12)
-            .map(|_| JournalWriter::create(dir.path(), Operation::Organize).unwrap().id().to_string())
+            .map(|_| {
+                JournalWriter::create(dir.path(), Operation::Organize)
+                    .unwrap()
+                    .id()
+                    .to_string()
+            })
             .collect();
         let loaded: Vec<String> = Journal::load_all(dir.path())
             .unwrap()
@@ -393,7 +414,8 @@ mod tests {
         f.write_all(b"{\"type\":\"move\",\"from\":\"a").unwrap();
         assert!(Journal::load(&path).is_ok());
 
-        f.write_all(b"\n{\"type\":\"restored\",\"at\":1}\n").unwrap();
+        f.write_all(b"\n{\"type\":\"restored\",\"at\":1}\n")
+            .unwrap();
         assert!(Journal::load(&path).is_err());
     }
 

@@ -26,7 +26,14 @@ const MARKERS: &[&str] = &[
 ];
 
 /// Extensions of project files (`*.sln`, ...).
-const MARKER_EXTENSIONS: &[&str] = &["sln", "csproj", "fsproj", "vcxproj", "uproject", "xcodeproj"];
+const MARKER_EXTENSIONS: &[&str] = &[
+    "sln",
+    "csproj",
+    "fsproj",
+    "vcxproj",
+    "uproject",
+    "xcodeproj",
+];
 
 /// Returns `true` if `dir` looks like the root of a software project.
 pub fn is_project_dir(dir: &Path) -> bool {
@@ -78,7 +85,9 @@ mod tests {
 
     #[test]
     fn plain_folders_are_not_projects() {
-        assert!(!is_project_dir(dir_with(&["holiday.jpg", "notes.txt"]).path()));
+        assert!(!is_project_dir(
+            dir_with(&["holiday.jpg", "notes.txt"]).path()
+        ));
         assert!(!is_project_dir(Path::new("/definitely/not/a/dir")));
     }
 }

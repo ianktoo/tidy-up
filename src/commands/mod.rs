@@ -41,16 +41,25 @@ pub(crate) fn print_execution(root: &Path, report: &ExecutionReport) {
         ui::format_size(report.bytes)
     ));
     if !report.failed.is_empty() {
-        ui::warn(&format!("{} could not be moved:", ui::plural(report.failed.len(), "item")));
+        ui::warn(&format!(
+            "{} could not be moved:",
+            ui::plural(report.failed.len(), "item")
+        ));
         for (path, reason) in report.failed.iter().take(FAILURE_LIMIT) {
             ui::hint(&format!("{}: {reason}", ui::rel(root, path)));
         }
         if report.failed.len() > FAILURE_LIMIT {
-            ui::hint(&format!("… and {} more", report.failed.len() - FAILURE_LIMIT));
+            ui::hint(&format!(
+                "… and {} more",
+                report.failed.len() - FAILURE_LIMIT
+            ));
         }
     }
     if !report.journal_id.is_empty() {
         ui::info(&format!("Recorded as run {}", report.journal_id));
-        ui::hint(&format!("Undo with: tidy-up restore \"{}\"", root.display()));
+        ui::hint(&format!(
+            "Undo with: tidy-up restore \"{}\"",
+            root.display()
+        ));
     }
 }

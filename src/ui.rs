@@ -1,12 +1,7 @@
 //! Terminal output and prompts. All colour/progress/interaction lives here so the
 //! rest of the crate stays testable and presentation-free.
 
-use std::{
-    collections::BTreeMap,
-    io::IsTerminal,
-    path::Path,
-    time::Duration,
-};
+use std::{collections::BTreeMap, io::IsTerminal, path::Path, time::Duration};
 
 use anyhow::{Result, bail};
 use console::{Term, style};
@@ -35,7 +30,10 @@ pub fn format_size(bytes: u64) -> String {
 
 /// Renders `path` relative to `root` when possible.
 pub fn rel(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root).unwrap_or(path).display().to_string()
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .display()
+        .to_string()
 }
 
 /// `1 file` / `2 files` / `2 copies` (consonant + `y` becomes `ies`).
@@ -64,7 +62,10 @@ pub fn banner() {
         style("tidy-up").cyan().bold(),
         style(format!("v{}", env!("CARGO_PKG_VERSION"))).dim()
     );
-    println!("{}\n", style("Organize folders by file type, and undo it any time.").dim());
+    println!(
+        "{}\n",
+        style("Organize folders by file type, and undo it any time.").dim()
+    );
 }
 
 /// Section heading.
@@ -153,7 +154,8 @@ impl TransferBar {
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
-        self.0.set_message(format!("{}/{} {name}", progress.done, progress.total));
+        self.0
+            .set_message(format!("{}/{} {name}", progress.done, progress.total));
     }
 
     /// Removes the bar from the screen.
@@ -188,7 +190,8 @@ impl HashProgress for HashBar {
         self.0.reset();
         self.0.set_length(bytes.max(1));
         self.0.set_position(0);
-        self.0.set_prefix(format!("{label} ({})", plural(files, "file")));
+        self.0
+            .set_prefix(format!("{label} ({})", plural(files, "file")));
     }
 
     fn advance(&self, bytes: u64) {
@@ -215,7 +218,11 @@ pub fn confirm(prompt: &str, default: bool, assume_yes: bool) -> Result<bool> {
 pub fn print_plan(plan: &Plan, verbose: bool) {
     heading("Plan");
     for (folder, (count, bytes)) in plan.by_folder() {
-        let label = if folder.is_empty() { "(folder root)".to_string() } else { format!("{folder}/") };
+        let label = if folder.is_empty() {
+            "(folder root)".to_string()
+        } else {
+            format!("{folder}/")
+        };
         println!(
             "  {:<16} {:>6}  {:>10}",
             style(label).green(),
@@ -233,7 +240,11 @@ pub fn print_plan(plan: &Plan, verbose: bool) {
         .bold()
     );
 
-    let shown = if verbose { plan.moves.len() } else { PREVIEW_LIMIT.min(plan.moves.len()) };
+    let shown = if verbose {
+        plan.moves.len()
+    } else {
+        PREVIEW_LIMIT.min(plan.moves.len())
+    };
     if shown > 0 {
         println!();
     }
@@ -264,7 +275,11 @@ pub fn print_skipped(root: &Path, skipped: &[Skipped], verbose: bool) {
     }
     heading("Left alone");
     for (label, entries) in groups {
-        println!("  {} {}", style(plural(entries.len(), "item")).yellow(), label);
+        println!(
+            "  {} {}",
+            style(plural(entries.len(), "item")).yellow(),
+            label
+        );
         if verbose {
             for s in entries {
                 hint(&format!("{}  ({})", rel(root, &s.path), s.reason));
@@ -304,8 +319,14 @@ mod tests {
 
     #[test]
     fn rel_strips_root_when_possible() {
-        assert_eq!(rel(Path::new("/r"), Path::new("/r/a/b.txt")), Path::new("a/b.txt").display().to_string());
-        assert_eq!(rel(Path::new("/r"), Path::new("/x/y")), Path::new("/x/y").display().to_string());
+        assert_eq!(
+            rel(Path::new("/r"), Path::new("/r/a/b.txt")),
+            Path::new("a/b.txt").display().to_string()
+        );
+        assert_eq!(
+            rel(Path::new("/r"), Path::new("/x/y")),
+            Path::new("/x/y").display().to_string()
+        );
     }
 
     #[test]

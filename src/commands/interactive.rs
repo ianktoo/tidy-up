@@ -49,7 +49,10 @@ pub fn run() -> Result<()> {
             2 => compare_flow(&root),
             3 => restore_flow(&root),
             4 => restore::history(&HistoryArgs { path: root.clone() }),
-            5 => dedupe::purge(&PurgeArgs { path: root.to_path_buf(), yes: false }),
+            5 => dedupe::purge(&PurgeArgs {
+                path: root.to_path_buf(),
+                yes: false,
+            }),
             6 => choose_folder().map(|new_root| root = new_root),
             _ => return Ok(()),
         };
@@ -61,8 +64,11 @@ pub fn run() -> Result<()> {
 
 /// Offers common folders plus free-form entry and returns a validated absolute path.
 fn choose_folder() -> Result<PathBuf> {
-    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from);
-    let mut options: Vec<(String, PathBuf)> = vec![("This folder (current directory)".into(), PathBuf::from("."))];
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from);
+    let mut options: Vec<(String, PathBuf)> =
+        vec![("This folder (current directory)".into(), PathBuf::from("."))];
     if let Some(home) = home {
         for name in ["Downloads", "Desktop", "Documents"] {
             let path = home.join(name);
@@ -81,7 +87,11 @@ fn choose_folder() -> Result<PathBuf> {
         .interact()?;
     let path = match options.get(pick) {
         Some((_, path)) => path.clone(),
-        None => PathBuf::from(Input::<String>::new().with_prompt("Folder path").interact_text()?),
+        None => PathBuf::from(
+            Input::<String>::new()
+                .with_prompt("Folder path")
+                .interact_text()?,
+        ),
     };
     Ok(resolve_root(&path)?)
 }
@@ -112,7 +122,11 @@ fn organize_flow(root: &Path) -> Result<()> {
             ..Default::default()
         },
         depth: if subfolders { SUBFOLDER_DEPTH } else { 1 },
-        projects: if move_projects { ProjectPolicy::Move } else { ProjectPolicy::Keep },
+        projects: if move_projects {
+            ProjectPolicy::Move
+        } else {
+            ProjectPolicy::Keep
+        },
         dry_run: false,
         yes: false,
         verbose: false,
@@ -132,7 +146,10 @@ fn dedupe_flow(root: &Path) -> Result<()> {
 
 /// Collects extra folders to compare against `root` (which becomes the primary).
 fn compare_flow(root: &Path) -> Result<()> {
-    println!("{} is the primary folder: its copies are kept.", root.display());
+    println!(
+        "{} is the primary folder: its copies are kept.",
+        root.display()
+    );
     let mut paths = vec![root.to_path_buf()];
     loop {
         let extra: String = Input::new()

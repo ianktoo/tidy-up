@@ -47,7 +47,10 @@ pub fn run(args: &OrganizeArgs) -> Result<()> {
         return Ok(());
     }
     println!();
-    let prompt = format!("Move {} into category folders?", ui::plural(plan.moves.len(), "item"));
+    let prompt = format!(
+        "Move {} into category folders?",
+        ui::plural(plan.moves.len(), "item")
+    );
     if !ui::confirm(&prompt, true, args.yes)? {
         ui::info("Cancelled. Nothing was changed.");
         return Ok(());
