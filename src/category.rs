@@ -165,6 +165,14 @@ impl Category {
         }
     }
 
+    /// The lowercase extensions (no dot) that map to this category; empty for `Other`.
+    pub fn extensions(self) -> &'static [&'static str] {
+        TABLE
+            .iter()
+            .find(|(category, _)| *category == self)
+            .map_or(&[], |(_, exts)| *exts)
+    }
+
     /// Classifies a bare extension (with or without a leading dot, any case).
     pub fn from_extension(ext: &str) -> Category {
         let ext = ext.trim_start_matches('.').to_lowercase();
@@ -220,6 +228,36 @@ mod tests {
             for e in *exts {
                 assert!(seen.insert(*e), "extension `{e}` appears twice");
                 assert_eq!(*e, e.to_lowercase(), "extensions must be lowercase");
+            }
+        }
+    }
+
+    #[test]
+    fn extensions_accessor_matches_classification() {
+        for category in Category::ALL {
+            for ext in category.extensions() {
+                assert_eq!(Category::from_extension(ext), category);
+            }
+        }
+        assert!(Category::Other.extensions().is_empty());
+        assert!(!Category::Images.extensions().is_empty());
+    }
+
+    /// `docs/file-types.md` is the user-facing list; it must never drift from the table.
+    #[test]
+    fn file_types_doc_lists_every_extension_and_folder() {
+        let doc = include_str!("../docs/file-types.md");
+        for category in Category::ALL {
+            assert!(
+                doc.contains(&format!("`{}/`", category.folder_name())),
+                "docs/file-types.md is missing the folder {}",
+                category.folder_name()
+            );
+            for ext in category.extensions() {
+                assert!(
+                    doc.contains(&format!("`{ext}`")),
+                    "docs/file-types.md is missing the extension `{ext}` ({category:?})"
+                );
             }
         }
     }

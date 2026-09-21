@@ -1,0 +1,85 @@
+# Reusable workflow: builds release binaries for every supported platform and uploads them
+# as workflow artifacts (one archive per target). Called by ci.yml and release.yml.
+name: Build binaries
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Version label used in archive names (defaults to the version in Cargo.toml)"
+        type: string
+        required: false
+        default: ""
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, archive: zip }
+          - { os: windows-latest, target: aarch64-pc-windows-msvc, archive: zip }
+          - { os: macos-latest, target: aarch64-apple-darwin, archive: tar.gz }
+          - { os: macos-latest, target: x86_64-apple-darwin, archive: tar.gz }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu, archive: tar.gz }
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl, archive: tar.gz, musl: true }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu, archive: tar.gz }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install musl tools
+        if: matrix.musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package
+        id: package
+        shell: bash
+        run: |
+          version="${{ inputs.version }}"
+          if [ -z "$version" ]; then
+            version="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
+          fi
+          name="tidy-up-${version}-${{ matrix.target }}"
+          mkdir "$name"
+          exe="tidy-up"
+          if [ "${{ runner.os }}" = "Windows" ]; then exe="tidy-up.exe"; fi
+          cp "target/${{ matrix.target }}/release/$exe" "$name/"
+          cp README.md LICENSE EULA.md "$name/"
+          if [ "${{ matrix.archive }}" = "zip" ]; then
+            7z a -tzip "$name.zip" "$name" > /dev/null
+            echo "file=$name.zip" >> "$GITHUB_OUTPUT"
+          else
+            tar czf "$name.tar.gz" "$name"
+            echo "file=$name.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Smoke test (native targets only)
+        if: matrix.target != 'aarch64-pc-windows-msvc' && matrix.target != 'x86_64-apple-darwin'
+        shell: bash
+        run: |
+          exe="target/${{ matrix.target }}/release/tidy-up"
+          if [ "${{ runner.os }}" = "Windows" ]; then exe="$exe.exe"; fi
+          "$exe" --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tidy-up-${{ matrix.target }}
+          path: ${{ steps.package.outputs.file }}
+          if-no-files-found: error
+          retention-days: 14
