@@ -1,6 +1,9 @@
 //! Carries out a [`Plan`], journaling every change as it happens.
 
-use std::{collections::HashSet, path::PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use crate::{
     error::Result,
@@ -8,6 +11,21 @@ use crate::{
     journal::{JournalWriter, Operation},
     plan::Plan,
 };
+
+/// Snapshot passed to the progress callback of [`execute`].
+#[derive(Debug, Clone, Copy)]
+pub struct Progress<'a> {
+    /// Moves completed or attempted so far.
+    pub done: usize,
+    /// Total moves in the plan.
+    pub total: usize,
+    /// Bytes successfully moved so far.
+    pub bytes_done: u64,
+    /// Bytes in the whole plan.
+    pub bytes_total: u64,
+    /// The item about to be moved (the plan root once finished).
+    pub current: &'a Path,
+}
 
 /// Outcome of [`execute`].
 #[derive(Debug, Default)]
@@ -22,7 +40,7 @@ pub struct ExecutionReport {
     pub failed: Vec<(PathBuf, String)>,
 }
 
-/// Executes `plan`, calling `on_progress(done, total)` before each move.
+/// Executes `plan`, calling `on_progress` before each move and once at the end.
 ///
 /// Individual move failures are collected in the report. A *journal* failure is
 /// fatal: the move in flight is rolled back and the error returned, because a
@@ -30,7 +48,7 @@ pub struct ExecutionReport {
 pub fn execute(
     plan: &Plan,
     operation: Operation,
-    mut on_progress: impl FnMut(usize, usize),
+    mut on_progress: impl FnMut(&Progress),
 ) -> Result<ExecutionReport> {
     if plan.is_empty() {
         return Ok(ExecutionReport::default());
@@ -41,10 +59,17 @@ pub fn execute(
         ..Default::default()
     };
     let total = plan.moves.len();
+    let bytes_total = plan.total_bytes();
     let no_reservations = HashSet::new();
 
     for (done, planned) in plan.moves.iter().enumerate() {
-        on_progress(done, total);
+        on_progress(&Progress {
+            done,
+            total,
+            bytes_done: report.bytes,
+            bytes_total,
+            current: &planned.from,
+        });
 
         // The destination may have appeared since planning; never overwrite.
         let dest = unique_path(&planned.to, &no_reservations);
@@ -71,7 +96,13 @@ pub fn execute(
         report.moved += 1;
         report.bytes += planned.size;
     }
-    on_progress(total, total);
+    on_progress(&Progress {
+        done: total,
+        total,
+        bytes_done: report.bytes,
+        bytes_total,
+        current: &plan.root,
+    });
     Ok(report)
 }
 
@@ -109,7 +140,7 @@ mod tests {
         let plan = plan_for(dir.path(), &[("a.png", "Images/a.png"), ("b.pdf", "Documents/b.pdf")]);
 
         let mut ticks = Vec::new();
-        let report = execute(&plan, Operation::Organize, |d, t| ticks.push((d, t))).unwrap();
+        let report = execute(&plan, Operation::Organize, |p| ticks.push((p.done, p.total))).unwrap();
 
         assert_eq!((report.moved, report.bytes), (2, 6));
         assert!(report.failed.is_empty());
@@ -125,7 +156,7 @@ mod tests {
     #[test]
     fn empty_plan_creates_no_journal() {
         let dir = tempfile::tempdir().unwrap();
-        let report = execute(&plan_for(dir.path(), &[]), Operation::Organize, |_, _| {}).unwrap();
+        let report = execute(&plan_for(dir.path(), &[]), Operation::Organize, |_| {}).unwrap();
         assert!(report.journal_id.is_empty());
         assert!(Journal::load_all(dir.path()).unwrap().is_empty());
     }
@@ -138,7 +169,7 @@ mod tests {
             dir.path(),
             &[("ghost.txt", "Text Files/ghost.txt"), ("real.txt", "Text Files/real.txt")],
         );
-        let report = execute(&plan, Operation::Organize, |_, _| {}).unwrap();
+        let report = execute(&plan, Operation::Organize, |_| {}).unwrap();
         assert_eq!(report.moved, 1);
         assert_eq!(report.failed.len(), 1);
         assert!(report.failed[0].0.ends_with("ghost.txt"));
@@ -151,7 +182,7 @@ mod tests {
         fs::write(dir.path().join("Images/a.png"), "OLD").unwrap();
         fs::write(dir.path().join("a.png"), "NEW").unwrap();
         let plan = plan_for(dir.path(), &[("a.png", "Images/a.png")]);
-        execute(&plan, Operation::Organize, |_, _| {}).unwrap();
+        execute(&plan, Operation::Organize, |_| {}).unwrap();
         assert_eq!(fs::read_to_string(dir.path().join("Images/a.png")).unwrap(), "OLD");
         assert_eq!(fs::read_to_string(dir.path().join("Images/a (1).png")).unwrap(), "NEW");
     }
@@ -161,7 +192,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("a.png"), "abc").unwrap();
         let plan = plan_for(dir.path(), &[("a.png", "Images/a.png")]);
-        let report = execute(&plan, Operation::Organize, |_, _| {}).unwrap();
+        let report = execute(&plan, Operation::Organize, |_| {}).unwrap();
         let journal = Journal::find(dir.path(), &report.journal_id).unwrap();
         use crate::journal::Record;
         assert!(matches!(journal.records[0], Record::DirCreated { .. }));

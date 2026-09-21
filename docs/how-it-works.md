@@ -3,7 +3,7 @@
 ## Pipeline
 
 ```text
-classify ─▶ scan ─▶ plan ─▶ execute ─▶ journal ─▶ restore
+classify -> scan -> plan -> execute -> journal -> restore
 ```
 
 | Stage | Module | Responsibility |
@@ -37,7 +37,10 @@ appended the moment it happens:
 Design decisions:
 
 - **Relative paths.** Moves are stored relative to the folder, so a drive that
-  changes letter (or a folder that is renamed) keeps a valid history.
+  changes letter (or a folder that is renamed) keeps a valid history. When several
+  folders are compared, the journal lives in the primary folder and paths outside
+  it are stored absolute (joining an absolute path onto the root yields that path,
+  which is how restore finds them).
 - **Append-only, flushed per record.** A crash mid-run leaves a complete record
   of everything already moved. A torn *final* line is tolerated when loading;
   corruption anywhere else is an error.
@@ -82,12 +85,40 @@ Only a run that ends with no conflicts and no failures is marked restored.
 2. **Partial hash.** BLAKE3 of the first 4 KiB of each size-mate. Most non-duplicates are eliminated here.
 3. **Full hash.** BLAKE3 of the whole file for anything that still collides.
 
-Stages 2 and 3 run on a scoped-thread pool (up to 8 workers) with results kept in
+Stages 2 and 3 run on a scoped-thread pool (at most 4 workers, and never more than half the cores) with results kept in
 input order. Unreadable files are reported and excluded rather than aborting.
 
 **Keeper choice:** shallowest path depth, then oldest modification time, then path order,
 so results are deterministic. Duplicates land in `_Duplicates/Group-NNN/`, largest reclaimable
 space first, with name collisions inside a group resolved as `name (1).ext`.
+
+## Comparing folders
+
+`compare` scans each folder, tags every file with the index of the folder it came from
+(`FileEntry::source`), and runs the same duplicate pipeline over the combined list. Keeper
+choice ranks `source` first, so the earliest-listed folder always wins, then depth, age and
+path. A folder's content is modelled as the set of distinct contents it holds (each
+duplicate group is one identity), which makes the pairwise relations (identical, subset,
+overlapping, disjoint) simple set comparisons.
+
+Merge is a plan like any other: extra copies to `_Duplicates/`, plus a move into the
+primary for every file that exists only elsewhere and for every kept copy that lives
+outside it. It is executed and journaled by the same executor, so it is undoable in the same way.
+
+Delete is the one irreversible action and is deliberately not journaled. Right before
+removing a file it is re-hashed and compared with the group hash, and so is the kept copy;
+anything that changed since the scan is left alone and reported.
+
+## Resource use and progress
+
+- Hashing runs on at most `min(4, cores / 2)` threads, so the machine stays responsive.
+- Passes are staged (size, then first 4 KiB, then full hash), so most files are never read in full.
+- Progress is byte-based: `HashBar` restarts for each hashing pass, and `TransferBar` shows
+  bytes moved, throughput, ETA and the current file while moving, which stays honest for
+  multi-gigabyte files copied between drives. Both draw to stderr and stay hidden when it
+  is not a terminal, so piping and scripting output is unaffected.
+- The library exposes progress through the `HashProgress` trait and the `executor::Progress`
+  struct, so any front end can render its own.
 
 ## Using it as a library
 
@@ -107,7 +138,7 @@ let options = ScanOptions {
     skip_root_dirs: organize_skip_dirs(),
 };
 let plan = build_organize_plan(root, &scan(root, &options)?, ProjectPolicy::Keep);
-let report = execute(&plan, Operation::Organize, |done, total| { /* progress */ })?;
+let report = execute(&plan, Operation::Organize, |p| { /* p.done, p.bytes_done, p.current */ })?;
 ```
 
 Then `restore::restore(root, &mut journal, RestoreOptions::default(), |_, _| {})` to undo.

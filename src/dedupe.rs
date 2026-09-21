@@ -1,7 +1,7 @@
 //! Duplicate detection and the plan that isolates duplicates for review.
 //!
 //! Detection is staged so most files are never fully read:
-//! 1. group by size (free — already known from the scan),
+//! 1. group by size (free, already known from the scan),
 //! 2. hash only the first 4 KiB of size-mates,
 //! 3. fully hash whatever still collides.
 //!
@@ -27,6 +27,23 @@ use crate::{
 
 /// Bytes hashed in the cheap first pass.
 const PARTIAL_BYTES: u64 = 4096;
+
+/// Receives progress from [`find_duplicates`]. Must be `Sync` because files are hashed
+/// on worker threads.
+pub trait HashProgress: Sync {
+    /// A new pass over `files` files totalling `bytes` bytes is starting.
+    fn stage(&self, label: &'static str, files: usize, bytes: u64);
+    /// `bytes` more bytes have been hashed in the current pass.
+    fn advance(&self, bytes: u64);
+}
+
+/// A [`HashProgress`] that ignores everything.
+pub struct NoProgress;
+
+impl HashProgress for NoProgress {
+    fn stage(&self, _label: &'static str, _files: usize, _bytes: u64) {}
+    fn advance(&self, _bytes: u64) {}
+}
 
 /// A set of byte-identical files.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,7 +87,7 @@ impl DuplicateReport {
 }
 
 /// Hashes at most `limit` bytes of `path` (`None` = whole file).
-fn hash_file(path: &Path, limit: Option<u64>) -> std::io::Result<String> {
+pub(crate) fn hash_file(path: &Path, limit: Option<u64>) -> std::io::Result<String> {
     let file = File::open(path)?;
     let mut hasher = blake3::Hasher::new();
     match limit {
@@ -85,12 +102,15 @@ fn hash_file(path: &Path, limit: Option<u64>) -> std::io::Result<String> {
 fn hash_stage<'a>(
     files: Vec<&'a FileEntry>,
     limit: Option<u64>,
-    tick: &(dyn Fn() + Sync),
+    label: &'static str,
+    progress: &dyn HashProgress,
     unreadable: &mut Vec<PathBuf>,
 ) -> Vec<(&'a FileEntry, String)> {
+    let bytes_of = |f: &FileEntry| limit.map_or(f.size, |l| f.size.min(l));
+    progress.stage(label, files.len(), files.iter().map(|f| bytes_of(f)).sum());
     let hashes = parallel_map(&files, |f| {
         let result = hash_file(&f.path, limit);
-        tick();
+        progress.advance(bytes_of(f));
         result
     });
     files
@@ -119,17 +139,24 @@ fn collisions<'a, K: Ord>(
 
 /// Finds byte-identical files among `files`. Empty files are ignored.
 ///
-/// `tick` is called once per file hashed (from worker threads) so callers can drive a progress bar.
-pub fn find_duplicates(files: &[FileEntry], tick: &(dyn Fn() + Sync)) -> DuplicateReport {
+/// `progress` is told about each pass and each file hashed (from worker threads) so callers
+/// can drive a progress bar.
+pub fn find_duplicates(files: &[FileEntry], progress: &dyn HashProgress) -> DuplicateReport {
     let mut report = DuplicateReport::default();
 
     let by_size = collisions(files.iter().filter(|f| f.size > 0).map(|f| (f.size, f)));
     let partial_input: Vec<_> = by_size.into_iter().flat_map(|(_, g)| g).collect();
-    let partial = hash_stage(partial_input, Some(PARTIAL_BYTES), tick, &mut report.unreadable);
+    let partial = hash_stage(
+        partial_input,
+        Some(PARTIAL_BYTES),
+        "Quick check",
+        progress,
+        &mut report.unreadable,
+    );
 
     let by_partial = collisions(partial.into_iter().map(|(f, h)| ((f.size, h), f)));
     let full_input: Vec<_> = by_partial.into_iter().flat_map(|(_, g)| g).collect();
-    let full = hash_stage(full_input, None, tick, &mut report.unreadable);
+    let full = hash_stage(full_input, None, "Verifying", progress, &mut report.unreadable);
 
     let mut groups: Vec<DuplicateGroup> = collisions(full.into_iter().map(|(f, h)| ((f.size, h), f)))
         .into_iter()
@@ -154,9 +181,11 @@ pub fn find_duplicates(files: &[FileEntry], tick: &(dyn Fn() + Sync)) -> Duplica
     report
 }
 
-/// Sort key deciding which copy to keep: shallowest, then oldest, then path.
-fn keeper_rank(file: &FileEntry) -> (usize, SystemTime, &Path) {
+/// Sort key deciding which copy to keep: earliest-listed folder, then shallowest,
+/// then oldest, then path.
+fn keeper_rank(file: &FileEntry) -> (usize, usize, SystemTime, &Path) {
     (
+        file.source,
         file.depth,
         file.modified.unwrap_or(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(u32::MAX as u64)),
         &file.path,
@@ -221,6 +250,55 @@ pub fn write_report(root: &Path, journal_id: &str, groups: &[DuplicateGroup]) ->
     Ok(path)
 }
 
+/// Outcome of [`delete_duplicates`].
+#[derive(Debug, Default)]
+pub struct DeleteReport {
+    /// Files deleted.
+    pub deleted: usize,
+    /// Bytes freed.
+    pub bytes: u64,
+    /// Files left alone, with the reason.
+    pub skipped: Vec<(PathBuf, String)>,
+}
+
+/// Permanently deletes the redundant copies in `groups`.
+///
+/// Deletion cannot be undone, so before removing anything each copy is re-hashed:
+/// a duplicate is only deleted if it still matches the group hash *and* the kept copy
+/// still exists and matches too. Anything that changed since the scan is skipped.
+pub fn delete_duplicates(
+    groups: &[DuplicateGroup],
+    mut on_progress: impl FnMut(usize, usize),
+) -> DeleteReport {
+    let total: usize = groups.iter().map(|g| g.duplicates.len()).sum();
+    let mut report = DeleteReport::default();
+    let mut done = 0;
+    for group in groups {
+        let keeper_ok = hash_file(&group.keeper, None).is_ok_and(|h| h == group.hash);
+        for dup in &group.duplicates {
+            on_progress(done, total);
+            done += 1;
+            if !keeper_ok {
+                report.skipped.push((dup.clone(), "the kept copy is missing or changed".into()));
+                continue;
+            }
+            match hash_file(dup, None) {
+                Ok(hash) if hash == group.hash => match fs::remove_file(dup) {
+                    Ok(()) => {
+                        report.deleted += 1;
+                        report.bytes += group.size;
+                    }
+                    Err(e) => report.skipped.push((dup.clone(), e.to_string())),
+                },
+                Ok(_) => report.skipped.push((dup.clone(), "changed since the scan".into())),
+                Err(e) => report.skipped.push((dup.clone(), e.to_string())),
+            }
+        }
+    }
+    on_progress(total, total);
+    report
+}
+
 /// Sums file count and bytes inside the duplicates folder (0, 0 if absent).
 pub fn duplicates_folder_stats(root: &Path) -> (usize, u64) {
     fn walk(dir: &Path, acc: &mut (usize, u64)) {
@@ -283,7 +361,7 @@ mod tests {
         write(dir.path(), "sub/copy.txt", b"same content");
         write(dir.path(), "same-size.txt", b"SAME CONTENT");
         write(dir.path(), "unique.txt", b"different");
-        let report = find_duplicates(&entries(dir.path()), &|| {});
+        let report = find_duplicates(&entries(dir.path()), &NoProgress);
         assert_eq!(report.groups.len(), 1);
         let group = &report.groups[0];
         assert_eq!(group.keeper, dir.path().join("a.txt"));
@@ -301,7 +379,7 @@ mod tests {
         b.push(2);
         write(dir.path(), "a.bin", &a);
         write(dir.path(), "b.bin", &b);
-        assert!(find_duplicates(&entries(dir.path()), &|| {}).groups.is_empty());
+        assert!(find_duplicates(&entries(dir.path()), &NoProgress).groups.is_empty());
     }
 
     #[test]
@@ -309,7 +387,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "a", b"");
         write(dir.path(), "b", b"");
-        assert!(find_duplicates(&entries(dir.path()), &|| {}).groups.is_empty());
+        assert!(find_duplicates(&entries(dir.path()), &NoProgress).groups.is_empty());
     }
 
     #[test]
@@ -318,7 +396,7 @@ mod tests {
         write(dir.path(), "deep/er/x.txt", b"data!");
         write(dir.path(), "mid/x.txt", b"data!");
         write(dir.path(), "top.txt", b"data!");
-        let report = find_duplicates(&entries(dir.path()), &|| {});
+        let report = find_duplicates(&entries(dir.path()), &NoProgress);
         let group = &report.groups[0];
         assert_eq!(group.keeper, dir.path().join("top.txt"));
         assert_eq!(group.duplicates.len(), 2);
@@ -331,7 +409,7 @@ mod tests {
         write(dir.path(), "s2.txt", b"ab");
         write(dir.path(), "b1.txt", &[9u8; 1000]);
         write(dir.path(), "b2.txt", &[9u8; 1000]);
-        let report = find_duplicates(&entries(dir.path()), &|| {});
+        let report = find_duplicates(&entries(dir.path()), &NoProgress);
         assert_eq!(report.groups[0].size, 1000);
         assert_eq!(report.groups[1].size, 2);
     }
@@ -342,12 +420,20 @@ mod tests {
         write(dir.path(), "a.txt", b"same");
         write(dir.path(), "b.txt", b"same");
         write(dir.path(), "c.txt", b"lone-and-long");
-        let ticks = AtomicUsize::new(0);
-        find_duplicates(&entries(dir.path()), &|| {
-            ticks.fetch_add(1, Ordering::Relaxed);
-        });
-        // two files hashed partially, then the same two hashed fully
-        assert_eq!(ticks.load(Ordering::Relaxed), 4);
+        struct Counting(AtomicUsize, AtomicUsize);
+        impl HashProgress for Counting {
+            fn stage(&self, _: &'static str, _: usize, _: u64) {
+                self.0.fetch_add(1, Ordering::Relaxed);
+            }
+            fn advance(&self, _: u64) {
+                self.1.fetch_add(1, Ordering::Relaxed);
+            }
+        }
+        let counting = Counting(AtomicUsize::new(0), AtomicUsize::new(0));
+        find_duplicates(&entries(dir.path()), &counting);
+        // two passes; two files hashed in each
+        assert_eq!(counting.0.load(Ordering::Relaxed), 2);
+        assert_eq!(counting.1.load(Ordering::Relaxed), 4);
     }
 
     #[test]
@@ -357,12 +443,13 @@ mod tests {
             size: 5,
             modified: None,
             depth: 1,
+            source: 0,
         };
         let ghost2 = FileEntry {
             path: PathBuf::from("/no/such/file-b"),
             ..ghost.clone()
         };
-        let report = find_duplicates(&[ghost, ghost2], &|| {});
+        let report = find_duplicates(&[ghost, ghost2], &NoProgress);
         assert!(report.groups.is_empty());
         assert_eq!(report.unreadable.len(), 2);
     }
@@ -373,7 +460,7 @@ mod tests {
         write(dir.path(), "a.txt", b"same");
         write(dir.path(), "x/a.txt", b"same");
         write(dir.path(), "y/a.txt", b"same");
-        let report = find_duplicates(&entries(dir.path()), &|| {});
+        let report = find_duplicates(&entries(dir.path()), &NoProgress);
         let plan = build_dedupe_plan(dir.path(), &report.groups);
         assert_eq!(plan.moves.len(), 2);
         assert!(plan.moves.iter().all(|m| m.to.starts_with(dir.path().join("_Duplicates/Group-001"))));
@@ -387,7 +474,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write(dir.path(), "a.txt", b"same");
         write(dir.path(), "b.txt", b"same");
-        let report = find_duplicates(&entries(dir.path()), &|| {});
+        let report = find_duplicates(&entries(dir.path()), &NoProgress);
         let path = write_report(dir.path(), "20260101-000000", &report.groups).unwrap();
         let text = fs::read_to_string(path).unwrap();
         assert!(text.contains("kept:  a.txt"));

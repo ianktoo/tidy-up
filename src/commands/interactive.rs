@@ -6,8 +6,8 @@ use anyhow::{Result, bail};
 use dialoguer::{Confirm, Input, Select};
 
 use crate::{
-    cli::{DedupeArgs, FilterArgs, HistoryArgs, OrganizeArgs, PurgeArgs},
-    commands::{dedupe, organize, restore},
+    cli::{CompareArgs, DedupeArgs, FilterArgs, HistoryArgs, OrganizeArgs, PurgeArgs},
+    commands::{compare, dedupe, organize, restore},
     fsops::resolve_root,
     journal::Journal,
     plan::ProjectPolicy,
@@ -18,9 +18,10 @@ use crate::{
 /// Folder depth used when the user opts to include sub-folders.
 const SUBFOLDER_DEPTH: u32 = 4;
 
-const MENU: [&str; 7] = [
+const MENU: [&str; 8] = [
     "Organize by file type",
     "Find duplicates and isolate them for review",
+    "Compare folders (find overlap, merge or clean up)",
     "Restore a previous run (undo)",
     "Show history",
     "Delete isolated duplicates for good",
@@ -45,10 +46,11 @@ pub fn run() -> Result<()> {
         let outcome = match pick {
             0 => organize_flow(&root),
             1 => dedupe_flow(&root),
-            2 => restore_flow(&root),
-            3 => restore::history(&HistoryArgs { path: root.clone() }),
-            4 => dedupe::purge(&PurgeArgs { path: root.to_path_buf(), yes: false }),
-            5 => choose_folder().map(|new_root| root = new_root),
+            2 => compare_flow(&root),
+            3 => restore_flow(&root),
+            4 => restore::history(&HistoryArgs { path: root.clone() }),
+            5 => dedupe::purge(&PurgeArgs { path: root.to_path_buf(), yes: false }),
+            6 => choose_folder().map(|new_root| root = new_root),
             _ => return Ok(()),
         };
         if let Err(err) = outcome {
@@ -128,10 +130,35 @@ fn dedupe_flow(root: &Path) -> Result<()> {
     })
 }
 
+/// Collects extra folders to compare against `root` (which becomes the primary).
+fn compare_flow(root: &Path) -> Result<()> {
+    println!("{} is the primary folder: its copies are kept.", root.display());
+    let mut paths = vec![root.to_path_buf()];
+    loop {
+        let extra: String = Input::new()
+            .with_prompt("Another folder to compare (blank to start)")
+            .allow_empty(true)
+            .interact_text()?;
+        if extra.trim().is_empty() {
+            break;
+        }
+        paths.push(PathBuf::from(extra.trim().trim_matches('"')));
+    }
+    compare::run(&CompareArgs {
+        paths,
+        filter: FilterArgs::default(),
+        depth: None,
+        action: None,
+        dry_run: false,
+        yes: false,
+        verbose: false,
+    })
+}
+
 fn restore_flow(root: &Path) -> Result<()> {
     let mut active = restore::active_journals(root)?;
     if active.is_empty() {
-        ui::success("Nothing to restore — no active runs recorded for this folder.");
+        ui::success("Nothing to restore: no active runs recorded for this folder.");
         return Ok(());
     }
     active.reverse(); // newest first

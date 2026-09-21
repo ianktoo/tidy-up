@@ -1,5 +1,6 @@
 //! Command implementations: glue between the CLI, the engine and the terminal UI.
 
+pub mod compare;
 pub mod dedupe;
 pub mod interactive;
 pub mod organize;
@@ -24,6 +25,7 @@ pub fn dispatch(cli: Cli) -> Result<()> {
         None => interactive::run(),
         Some(Command::Organize(args)) => organize::run(&args),
         Some(Command::Dedupe(args)) => dedupe::run(&args),
+        Some(Command::Compare(args)) => compare::run(&args),
         Some(Command::Restore(args)) => restore::run(&args),
         Some(Command::History(args)) => restore::history(&args),
         Some(Command::Purge(args)) => dedupe::purge(&args),
@@ -41,7 +43,7 @@ pub(crate) fn print_execution(root: &Path, report: &ExecutionReport) {
     if !report.failed.is_empty() {
         ui::warn(&format!("{} could not be moved:", ui::plural(report.failed.len(), "item")));
         for (path, reason) in report.failed.iter().take(FAILURE_LIMIT) {
-            ui::hint(&format!("{} — {reason}", ui::rel(root, path)));
+            ui::hint(&format!("{}: {reason}", ui::rel(root, path)));
         }
         if report.failed.len() > FAILURE_LIMIT {
             ui::hint(&format!("… and {} more", report.failed.len() - FAILURE_LIMIT));

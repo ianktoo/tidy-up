@@ -12,7 +12,7 @@ use anyhow::{Result, bail};
 use console::{Term, style};
 use indicatif::{ProgressBar, ProgressStyle};
 
-use crate::{plan::Plan, scan::Skipped};
+use crate::{dedupe::HashProgress, executor::Progress, plan::Plan, scan::Skipped};
 
 /// How many example lines to show per section unless `--verbose` is given.
 const PREVIEW_LIMIT: usize = 8;
@@ -64,7 +64,7 @@ pub fn banner() {
         style("tidy-up").cyan().bold(),
         style(format!("v{}", env!("CARGO_PKG_VERSION"))).dim()
     );
-    println!("{}\n", style("Organize folders by file type — and undo it any time.").dim());
+    println!("{}\n", style("Organize folders by file type, and undo it any time.").dim());
 }
 
 /// Section heading.
@@ -117,6 +117,85 @@ pub fn progress_bar(len: usize, message: &str) -> ProgressBar {
     bar
 }
 
+const BYTE_BAR: &str =
+    "{prefix:.bold} [{bar:30.cyan/blue}] {bytes}/{total_bytes} {binary_bytes_per_sec} eta {eta}";
+
+fn byte_bar(template: &str) -> ProgressBar {
+    let bar = ProgressBar::new(1);
+    bar.set_style(
+        ProgressStyle::with_template(template)
+            .expect("valid template")
+            .progress_chars("█▉▊▋▌▍▎▏ "),
+    );
+    bar
+}
+
+/// Byte-based progress for moving files: shows throughput, ETA, and the current file.
+///
+/// Byte progress (rather than item counts) keeps the bar honest when one item is a
+/// multi-gigabyte video being copied between drives.
+pub struct TransferBar(ProgressBar);
+
+impl TransferBar {
+    /// Creates a bar labelled `label`. It stays hidden when stderr is not a terminal.
+    pub fn new(label: &str) -> Self {
+        let bar = byte_bar(&format!("{BYTE_BAR}  {{wide_msg}}"));
+        bar.set_prefix(label.to_string());
+        Self(bar)
+    }
+
+    /// Reflects an [`executor::Progress`](crate::executor::Progress) snapshot.
+    pub fn update(&self, progress: &Progress) {
+        self.0.set_length(progress.bytes_total.max(1));
+        self.0.set_position(progress.bytes_done);
+        let name = progress
+            .current
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.0.set_message(format!("{}/{} {name}", progress.done, progress.total));
+    }
+
+    /// Removes the bar from the screen.
+    pub fn finish(&self) {
+        self.0.finish_and_clear();
+    }
+}
+
+/// Progress for content hashing; one bar that restarts for each pass.
+pub struct HashBar(ProgressBar);
+
+impl HashBar {
+    /// Creates the bar (hidden until the first pass starts, and when not on a terminal).
+    pub fn new() -> Self {
+        Self(byte_bar(BYTE_BAR))
+    }
+
+    /// Removes the bar from the screen.
+    pub fn finish(&self) {
+        self.0.finish_and_clear();
+    }
+}
+
+impl Default for HashBar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HashProgress for HashBar {
+    fn stage(&self, label: &'static str, files: usize, bytes: u64) {
+        self.0.reset();
+        self.0.set_length(bytes.max(1));
+        self.0.set_position(0);
+        self.0.set_prefix(format!("{label} ({})", plural(files, "file")));
+    }
+
+    fn advance(&self, bytes: u64) {
+        self.0.inc(bytes);
+    }
+}
+
 /// Asks a yes/no question. `assume_yes` short-circuits; without a terminal the
 /// answer is an error rather than a silent "no" so scripts fail loudly.
 pub fn confirm(prompt: &str, default: bool, assume_yes: bool) -> Result<bool> {
@@ -136,9 +215,10 @@ pub fn confirm(prompt: &str, default: bool, assume_yes: bool) -> Result<bool> {
 pub fn print_plan(plan: &Plan, verbose: bool) {
     heading("Plan");
     for (folder, (count, bytes)) in plan.by_folder() {
+        let label = if folder.is_empty() { "(folder root)".to_string() } else { format!("{folder}/") };
         println!(
             "  {:<16} {:>6}  {:>10}",
-            style(format!("{folder}/")).green(),
+            style(label).green(),
             count,
             style(format_size(bytes)).dim()
         );

@@ -8,8 +8,9 @@ use std::{
     thread,
 };
 
-/// Upper bound on worker threads; hashing is I/O-bound so more rarely helps.
-const MAX_WORKERS: usize = 8;
+/// Upper bound on worker threads. Hashing is I/O-bound, so more threads rarely help
+/// and would only compete with whatever else the machine is doing.
+const MAX_WORKERS: usize = 4;
 
 /// Applies `f` to every item on a pool of scoped threads.
 ///
@@ -20,8 +21,8 @@ where
     R: Send,
     F: Fn(&T) -> R + Sync,
 {
-    let workers = thread::available_parallelism()
-        .map_or(1, |n| n.get())
+    // Use at most half the cores so the machine stays responsive.
+    let workers = (thread::available_parallelism().map_or(1, |n| n.get()) / 2)
         .clamp(1, MAX_WORKERS)
         .min(items.len().max(1));
     let next = AtomicUsize::new(0);

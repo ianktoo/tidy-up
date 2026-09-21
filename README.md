@@ -63,11 +63,25 @@ Duplicates
 
 Under the hood: group by size → hash the first 4 KiB → full BLAKE3 hash, spread over a worker pool. Most files are never fully read.
 
-### 4. It stays out of your way
+### 4. It compares whole folders, not just files
+
+Point it at two, three or ten folders (across drives, backups, old laptop dumps) and it tells you how they relate, by content, not by name:
+
+```console
+$ tidy-up compare D:\Photos E:\Backup F:\OldLaptop
+How they compare
+  * #1 and #2 have identical content
+  * everything in #3 is also in #1 (#1 has more)
+```
+
+Then you decide: **leave** it as a report, **move** the extra copies aside, **merge** everything into one folder, or **delete** the extras. The first folder you list is the one whose copies win. Move and merge are fully undoable, and delete re-hashes every file right before removing it.
+
+### 5. It stays out of your way
 
 - **Shortcuts and hidden files skipped by default** (`.lnk`, `.url`, dotfiles, `desktop.ini`); opt in with a flag.
 - **Ignore anything** by extension, glob or exact name, from flags or a text file you commit alongside your dotfiles.
 - **Never overwrites.** Name clash? You get `name (1).ext`. Symlinks are never followed.
+- **Gentle on your machine.** Hashing uses at most half your cores (never more than 4 threads), and files are only fully read when a cheaper check says they might match. Live progress bars show throughput, ETA and the current file.
 - **Preview first.** Confirmation by default, `--dry-run` when you're curious, `--yes` when you're scripting.
 
 ## Try it in 30 seconds
@@ -86,7 +100,7 @@ Or run `tidy-up` with no arguments for the interactive menu.
 The CLI is a thin layer over a reusable crate. Each stage is a pure, independently testable piece:
 
 ```text
-classify ─▶ scan ─▶ plan ─▶ execute ─▶ journal ─▶ restore
+classify -> scan -> plan -> execute -> journal -> restore
 ```
 
 - A `Plan` is plain data, so previews, dry runs and confirmation prompts cost nothing.
@@ -106,6 +120,6 @@ Want to embed it? Everything is `pub` and documented (`cargo doc --open`).
 
 ## License
 
-Source code is [MIT](LICENSE). Official binaries are additionally covered by the [EULA](EULA.md) — free forever.
+Source code is [MIT](LICENSE). Official binaries are additionally covered by the [EULA](EULA.md), free forever.
 
 Built by [Ian Too](https://iantoo.space) · [hello@iantoo.space](mailto:hello@iantoo.space) · security reports: see [SECURITY.md](SECURITY.md)

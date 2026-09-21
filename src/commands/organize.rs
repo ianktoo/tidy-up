@@ -27,7 +27,7 @@ pub fn run(args: &OrganizeArgs) -> Result<()> {
     spinner.finish_and_clear();
     let scanned = scanned?;
     ui::info(&format!(
-        "Scanned {} — {} eligible",
+        "Scanned {}: {} eligible",
         root.display(),
         ui::plural(scanned.files.len(), "file")
     ));
@@ -35,7 +35,7 @@ pub fn run(args: &OrganizeArgs) -> Result<()> {
     let plan = build_organize_plan(&root, &scanned, args.projects);
     if plan.is_empty() {
         ui::print_skipped(&root, &plan.skipped, args.verbose);
-        ui::success("Nothing to organize — this folder is already tidy.");
+        ui::success("Nothing to organize: this folder is already tidy.");
         return Ok(());
     }
     ui::print_plan(&plan, args.verbose);
@@ -53,9 +53,9 @@ pub fn run(args: &OrganizeArgs) -> Result<()> {
         return Ok(());
     }
 
-    let bar = ui::progress_bar(plan.moves.len(), "Organizing");
-    let report = execute(&plan, Operation::Organize, |done, _| bar.set_position(done as u64));
-    bar.finish_and_clear();
+    let bar = ui::TransferBar::new("Organizing");
+    let report = execute(&plan, Operation::Organize, |p| bar.update(p));
+    bar.finish();
     print_execution(&root, &report?);
     Ok(())
 }

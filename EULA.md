@@ -1,10 +1,10 @@
 # tidy-up End User License Agreement
 
-**Version 1.0 — effective 2026-09-20**
+**Version 1.0, effective 2026-09-20**
 
 This End User License Agreement ("Agreement") applies to official binary
 distributions of **tidy-up** ("the Software") published by **Ian Too**
-("the Publisher", "we") — <https://iantoo.space>, <hello@iantoo.space>.
+("the Publisher", "we"), reachable at <https://iantoo.space> and <hello@iantoo.space>.
 By installing or using an official binary you accept this Agreement.
 
 ## Relationship to the MIT License
@@ -39,7 +39,7 @@ You may not, except as permitted by the MIT License for the source code or by la
 3. present modified builds as official tidy-up releases, or use the tidy-up name
    in a way that suggests our endorsement.
 
-## 4. Your files — read this
+## 4. Your files: read this
 
 tidy-up **moves files** on your computer. It is designed to be safe: it never
 overwrites files, previews changes, asks before acting, and records every move in a
@@ -106,4 +106,4 @@ version applies to releases published under it.
 
 ## Contact
 
-Ian Too — <hello@iantoo.space> — <https://iantoo.space>
+Ian Too, <hello@iantoo.space>, <https://iantoo.space>

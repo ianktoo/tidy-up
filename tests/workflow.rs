@@ -7,7 +7,8 @@ use std::{
 };
 
 use tidy_up::{
-    dedupe::{build_dedupe_plan, find_duplicates},
+    compare::{build_merge_plan, compare, scan_folders, validate_folders},
+    dedupe::{NoProgress, build_dedupe_plan, delete_duplicates, find_duplicates},
     executor::execute,
     fsops::resolve_root,
     journal::{Journal, Operation},
@@ -96,7 +97,7 @@ fn organize_then_restore_returns_to_exact_original_state() {
 
     let scanned = scan(&root, &organize_options(usize::MAX)).unwrap();
     let plan = build_organize_plan(&root, &scanned, ProjectPolicy::Move);
-    let report = execute(&plan, Operation::Organize, |_, _| {}).unwrap();
+    let report = execute(&plan, Operation::Organize, |_| {}).unwrap();
     assert!(report.failed.is_empty(), "{:?}", report.failed);
 
     let after = snapshot(&root);
@@ -127,7 +128,7 @@ fn organizing_twice_is_idempotent() {
         &scan(&root, &organize_options(1)).unwrap(),
         ProjectPolicy::Keep,
     );
-    execute(&plan, Operation::Organize, |_, _| {}).unwrap();
+    execute(&plan, Operation::Organize, |_| {}).unwrap();
 
     let second = build_organize_plan(
         &root,
@@ -147,7 +148,7 @@ fn projects_stay_put_by_default() {
         &scan(&root, &organize_options(usize::MAX)).unwrap(),
         ProjectPolicy::Keep,
     );
-    execute(&plan, Operation::Organize, |_, _| {}).unwrap();
+    execute(&plan, Operation::Organize, |_| {}).unwrap();
     assert!(root.join("myrepo/Cargo.toml").exists());
     assert!(root.join("myrepo/src/main.rs").exists());
 }
@@ -160,7 +161,7 @@ fn ignore_rules_protect_matching_files() {
     options.rules.add_extension("pdf");
     options.rules.add_entry("no*");
     let plan = build_organize_plan(&root, &scan(&root, &options).unwrap(), ProjectPolicy::Keep);
-    execute(&plan, Operation::Organize, |_, _| {}).unwrap();
+    execute(&plan, Operation::Organize, |_| {}).unwrap();
     assert!(root.join("thesis.pdf").exists());
     assert!(root.join("notes.txt").exists());
     assert!(!root.join("holiday.jpg").exists());
@@ -181,12 +182,12 @@ fn dedupe_isolates_extra_copies_and_restore_brings_them_back() {
         rules: IgnoreRules::new(),
         skip_root_dirs: ["_duplicates".to_string()].into(),
     };
-    let found = find_duplicates(&scan(&root, &options).unwrap().files, &|| {});
+    let found = find_duplicates(&scan(&root, &options).unwrap().files, &NoProgress);
     assert_eq!(found.groups.len(), 1);
     assert_eq!(found.groups[0].keeper, root.join("report.pdf"));
 
     let plan = build_dedupe_plan(&root, &found.groups);
-    let report = execute(&plan, Operation::Dedupe, |_, _| {}).unwrap();
+    let report = execute(&plan, Operation::Dedupe, |_| {}).unwrap();
     assert_eq!(report.moved, 2);
     let after = snapshot(&root);
     assert!(after.contains_key(Path::new("report.pdf")));
@@ -194,7 +195,7 @@ fn dedupe_isolates_extra_copies_and_restore_brings_them_back() {
     assert_eq!(after.keys().filter(|p| p.starts_with("_Duplicates")).count(), 2);
 
     // A second scan ignores the quarantine folder, so nothing is re-flagged.
-    let again = find_duplicates(&scan(&root, &options).unwrap().files, &|| {});
+    let again = find_duplicates(&scan(&root, &options).unwrap().files, &NoProgress);
     assert!(again.groups.is_empty());
 
     let mut journal = Journal::find(&root, &report.journal_id).unwrap();
@@ -216,12 +217,12 @@ fn stacked_runs_undo_in_reverse_order() {
         rules: IgnoreRules::new(),
         skip_root_dirs: ["_duplicates".to_string()].into(),
     };
-    let dups = find_duplicates(&scan(&root, &options).unwrap().files, &|| {});
-    let r1 = execute(&build_dedupe_plan(&root, &dups.groups), Operation::Dedupe, |_, _| {}).unwrap();
+    let dups = find_duplicates(&scan(&root, &options).unwrap().files, &NoProgress);
+    let r1 = execute(&build_dedupe_plan(&root, &dups.groups), Operation::Dedupe, |_| {}).unwrap();
 
     // Run 2: organize.
     let plan = build_organize_plan(&root, &scan(&root, &organize_options(1)).unwrap(), ProjectPolicy::Keep);
-    let r2 = execute(&plan, Operation::Organize, |_, _| {}).unwrap();
+    let r2 = execute(&plan, Operation::Organize, |_| {}).unwrap();
     assert_ne!(r1.journal_id, r2.journal_id);
 
     for id in [&r2.journal_id, &r1.journal_id] {
@@ -239,7 +240,7 @@ fn restore_handles_user_changes_made_after_organizing() {
     let root = resolve_root(dir.path()).unwrap();
     write(&root, "a.png", "original");
     let plan = build_organize_plan(&root, &scan(&root, &organize_options(1)).unwrap(), ProjectPolicy::Keep);
-    let report = execute(&plan, Operation::Organize, |_, _| {}).unwrap();
+    let report = execute(&plan, Operation::Organize, |_| {}).unwrap();
 
     write(&root, "a.png", "someone made a new a.png meanwhile");
     let mut journal = Journal::find(&root, &report.journal_id).unwrap();
@@ -261,10 +262,164 @@ fn name_collisions_across_folders_survive_round_trip() {
     let before = snapshot(&root);
 
     let plan = build_organize_plan(&root, &scan(&root, &organize_options(usize::MAX)).unwrap(), ProjectPolicy::Keep);
-    let report = execute(&plan, Operation::Organize, |_, _| {}).unwrap();
+    let report = execute(&plan, Operation::Organize, |_| {}).unwrap();
     assert_eq!(snapshot(&root).keys().filter(|p| p.starts_with("Images")).count(), 3);
 
     let mut journal = Journal::find(&root, &report.journal_id).unwrap();
     restore(&root, &mut journal, RestoreOptions::default(), |_, _| {}).unwrap();
     assert_eq!(snapshot(&root), before);
+}
+
+// ---------------------------------------------------------------- compare across folders
+
+/// Three folders on "different drives" (separate temp dirs) with overlapping content.
+struct Trio {
+    _guards: Vec<tempfile::TempDir>,
+    roots: Vec<PathBuf>,
+}
+
+fn trio() -> Trio {
+    let guards: Vec<_> = (0..3).map(|_| tempfile::tempdir().unwrap()).collect();
+    let roots: Vec<PathBuf> = guards.iter().map(|d| resolve_root(d.path()).unwrap()).collect();
+    // A (primary)
+    write(&roots[0], "shared.txt", "shared content");
+    write(&roots[0], "only-a.txt", "only in a");
+    write(&roots[0], "everywhere.bin", "in all three");
+    // B
+    write(&roots[1], "shared-copy.txt", "shared content");
+    write(&roots[1], "docs/only-b.txt", "only in b");
+    write(&roots[1], "everywhere.bin", "in all three");
+    // C
+    write(&roots[2], "another-copy.txt", "shared content");
+    write(&roots[2], "docs/only-b.txt", "different file, same name");
+    write(&roots[2], "everywhere.bin", "in all three");
+    Trio { _guards: guards, roots }
+}
+
+fn scan_trio(t: &Trio) -> (Vec<tidy_up::scan::FileEntry>, Vec<tidy_up::dedupe::DuplicateGroup>) {
+    let files = scan_folders(&t.roots, &IgnoreRules::new(), usize::MAX, |_, _| {}).unwrap();
+    let groups = find_duplicates(&files, &NoProgress).groups;
+    (files, groups)
+}
+
+fn snapshots(t: &Trio) -> Vec<BTreeMap<PathBuf, String>> {
+    t.roots.iter().map(|r| snapshot(r)).collect()
+}
+
+#[test]
+fn compare_reports_how_folders_relate() {
+    let t = trio();
+    let (files, groups) = scan_trio(&t);
+    let c = compare(&t.roots, &files, &groups);
+    assert!(!c.all_identical);
+    assert_eq!(groups.len(), 2, "shared.txt x3 and everywhere.bin x3");
+    assert_eq!(c.folders[0].files, 3);
+    assert_eq!(c.folders[1].shared, 2);
+    assert_eq!(c.folders[1].unique, 1);
+}
+
+#[test]
+fn compare_move_across_folders_then_restore_is_exact() {
+    let t = trio();
+    let before = snapshots(&t);
+    let (_, groups) = scan_trio(&t);
+
+    let plan = build_dedupe_plan(&t.roots[0], &groups);
+    assert_eq!(plan.moves.len(), 4, "two extra copies in each of two groups");
+    let report = execute(&plan, Operation::Compare, |_| {}).unwrap();
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+
+    // primary keeps its copies; extras live in the primary's _Duplicates
+    assert!(t.roots[0].join("shared.txt").exists());
+    assert!(!t.roots[1].join("shared-copy.txt").exists());
+    assert!(!t.roots[2].join("another-copy.txt").exists());
+    assert_eq!(
+        snapshot(&t.roots[0]).keys().filter(|p| p.starts_with("_Duplicates")).count(),
+        4
+    );
+    // non-duplicates untouched
+    assert!(t.roots[1].join("docs/only-b.txt").exists());
+
+    // the journal lives in the primary; restoring it puts files back in the OTHER folders
+    let mut journal = Journal::find(&t.roots[0], &report.journal_id).unwrap();
+    let restored = restore(&t.roots[0], &mut journal, RestoreOptions::default(), |_, _| {}).unwrap();
+    assert!(restored.is_clean(), "{restored:?}");
+    assert_eq!(snapshots(&t), before);
+}
+
+#[test]
+fn compare_merge_gathers_everything_into_the_primary_and_restore_undoes_it() {
+    let t = trio();
+    let before = snapshots(&t);
+    let (files, groups) = scan_trio(&t);
+
+    let plan = build_merge_plan(&t.roots, &files, &groups);
+    let report = execute(&plan, Operation::Compare, |_| {}).unwrap();
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+
+    let a = snapshot(&t.roots[0]);
+    assert_eq!(a[Path::new("only-a.txt")], "only in a");
+    assert_eq!(a[Path::new("docs/only-b.txt")], "only in b", "B's unique file gathered");
+    assert_eq!(
+        a[Path::new("docs/only-b (1).txt")],
+        "different file, same name",
+        "C's clashing file is renamed, never overwritten"
+    );
+    // B and C hold no real files now: everything moved into A (or A's _Duplicates)
+    assert!(snapshot(&t.roots[1]).is_empty(), "{:?}", snapshot(&t.roots[1]));
+    assert!(snapshot(&t.roots[2]).is_empty(), "{:?}", snapshot(&t.roots[2]));
+    // no content was lost: every original content still exists somewhere under A
+    let contents: Vec<&String> = a.values().collect();
+    for original in before.iter().flat_map(|s| s.values()) {
+        assert!(contents.contains(&original), "lost content: {original}");
+    }
+
+    let mut journal = Journal::find(&t.roots[0], &report.journal_id).unwrap();
+    let restored = restore(&t.roots[0], &mut journal, RestoreOptions::default(), |_, _| {}).unwrap();
+    assert!(restored.is_clean(), "{restored:?}");
+    assert_eq!(snapshots(&t), before);
+}
+
+#[test]
+fn merge_of_disjoint_folders_needs_no_duplicates() {
+    let a = tempfile::tempdir().unwrap();
+    let b = tempfile::tempdir().unwrap();
+    write(a.path(), "one.txt", "1");
+    write(b.path(), "two.txt", "2");
+    let roots = validate_folders(&[a.path().to_path_buf(), b.path().to_path_buf()]).unwrap();
+    let files = scan_folders(&roots, &IgnoreRules::new(), usize::MAX, |_, _| {}).unwrap();
+    let groups = find_duplicates(&files, &NoProgress).groups;
+    assert!(groups.is_empty());
+    let plan = build_merge_plan(&roots, &files, &groups);
+    execute(&plan, Operation::Compare, |_| {}).unwrap();
+    assert!(roots[0].join("one.txt").exists() && roots[0].join("two.txt").exists());
+}
+
+#[test]
+fn delete_keeps_exactly_one_copy_and_verifies_before_deleting() {
+    let t = trio();
+    let (_, groups) = scan_trio(&t);
+    let report = delete_duplicates(&groups, |_, _| {});
+    assert_eq!(report.deleted, 4);
+    assert!(report.skipped.is_empty());
+    assert!(t.roots[0].join("shared.txt").exists(), "primary copy survives");
+    assert!(!t.roots[1].join("shared-copy.txt").exists());
+    assert!(t.roots[1].join("docs/only-b.txt").exists());
+}
+
+#[test]
+fn delete_skips_copies_that_changed_after_the_scan() {
+    let t = trio();
+    let (_, groups) = scan_trio(&t);
+    // someone edits one extra copy, and the kept copy of the other group, after the scan
+    fs::write(t.roots[1].join("shared-copy.txt"), "edited since scan!!").unwrap();
+    fs::write(t.roots[0].join("everywhere.bin"), "kept copy was damaged").unwrap();
+
+    let report = delete_duplicates(&groups, |_, _| {});
+    assert!(t.roots[1].join("shared-copy.txt").exists(), "changed copy must survive");
+    assert!(t.roots[1].join("everywhere.bin").exists(), "unverifiable keeper keeps extras");
+    assert!(t.roots[2].join("everywhere.bin").exists());
+    assert!(!t.roots[2].join("another-copy.txt").exists(), "verified copy was deleted");
+    assert_eq!(report.deleted, 1);
+    assert_eq!(report.skipped.len(), 3);
 }

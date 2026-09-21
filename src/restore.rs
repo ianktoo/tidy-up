@@ -168,7 +168,7 @@ mod tests {
                 .collect(),
             skipped: vec![],
         };
-        let id = execute(&plan, Operation::Organize, |_, _| {}).unwrap().journal_id;
+        let id = execute(&plan, Operation::Organize, |_| {}).unwrap().journal_id;
         (dir, id)
     }
 
@@ -272,7 +272,7 @@ mod tests {
             }],
             skipped: vec![],
         };
-        let active = execute(&plan, Operation::Organize, |_, _| {}).unwrap().journal_id;
+        let active = execute(&plan, Operation::Organize, |_| {}).unwrap().journal_id;
         assert_eq!(forget_restored(dir.path()).unwrap(), 1);
         let left = Journal::load_all(dir.path()).unwrap();
         assert_eq!(left.len(), 1);

@@ -38,7 +38,7 @@ pub fn format_utc(secs: u64) -> String {
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02} UTC")
 }
 
-/// `20260920-140309` — sortable and filename-safe.
+/// `20260920-140309`: sortable and filename-safe.
 pub fn compact_id(secs: u64) -> String {
     let (y, mo, d, h, mi, s) = parts(secs);
     format!("{y:04}{mo:02}{d:02}-{h:02}{mi:02}{s:02}")

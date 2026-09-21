@@ -35,6 +35,8 @@ pub enum Operation {
     Organize,
     /// Moving duplicate files into the duplicates folder.
     Dedupe,
+    /// Comparing several folders, then moving or merging their duplicated content.
+    Compare,
 }
 
 impl std::fmt::Display for Operation {
@@ -42,6 +44,7 @@ impl std::fmt::Display for Operation {
         f.write_str(match self {
             Operation::Organize => "organize",
             Operation::Dedupe => "dedupe",
+            Operation::Compare => "compare",
         })
     }
 }
@@ -157,16 +160,14 @@ impl JournalWriter {
         self.append(&Record::Move { from, to, kind })
     }
 
+    /// Paths under the root are stored relative to it (portable). Paths outside it,
+    /// which happens when several folders are compared, are stored absolute; joining
+    /// an absolute path onto the root at restore time yields that path unchanged.
     fn relative(&self, path: &Path) -> Result<PathBuf> {
-        path.strip_prefix(&self.root)
-            .map(Path::to_path_buf)
-            .map_err(|_| {
-                Error::Invalid(format!(
-                    "{} is outside the folder being tidied ({})",
-                    path.display(),
-                    self.root.display()
-                ))
-            })
+        if !path.is_absolute() {
+            return Err(Error::Invalid(format!("{} is not an absolute path", path.display())));
+        }
+        Ok(path.strip_prefix(&self.root).unwrap_or(path).to_path_buf())
     }
 
     fn append(&mut self, record: &Record) -> Result<()> {
@@ -333,14 +334,20 @@ mod tests {
     }
 
     #[test]
-    fn rejects_paths_outside_root() {
+    fn paths_outside_root_are_stored_absolute_and_relative_ones_rejected() {
         let dir = root();
         let other = root();
-        let mut w = JournalWriter::create(dir.path(), Operation::Dedupe).unwrap();
-        let err = w
-            .record_move(&other.path().join("x"), &dir.path().join("y"), MoveKind::File)
-            .unwrap_err();
-        assert!(err.to_string().contains("outside"));
+        let mut w = JournalWriter::create(dir.path(), Operation::Compare).unwrap();
+        w.record_move(&other.path().join("x"), &dir.path().join("y"), MoveKind::File)
+            .unwrap();
+        let j = Journal::find(dir.path(), w.id()).unwrap();
+        let (from, to, _) = j.moves().next().unwrap();
+        assert_eq!(from, other.path().join("x"), "outside paths stay absolute");
+        assert_eq!(to, Path::new("y"), "inside paths are relative");
+        // joining an absolute path onto the root gives it back unchanged (used by restore)
+        assert_eq!(dir.path().join(from), other.path().join("x"));
+
+        assert!(w.record_move(Path::new("rel"), &dir.path().join("y"), MoveKind::File).is_err());
     }
 
     #[test]

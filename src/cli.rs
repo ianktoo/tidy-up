@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 
 use crate::{
+    compare::CompareAction,
     plan::ProjectPolicy,
     restore::ConflictPolicy,
     rules::IgnoreRules,
@@ -41,6 +42,9 @@ pub enum Command {
     /// Find duplicate files and move the extra copies into `_Duplicates/` for review.
     #[command(visible_alias = "d")]
     Dedupe(DedupeArgs),
+    /// Compare two or more folders by content, then leave, move, merge or delete the overlap.
+    #[command(visible_alias = "c")]
+    Compare(CompareArgs),
     /// Undo a previous run and put files back where they were.
     #[command(visible_alias = "r")]
     Restore(RestoreArgs),
@@ -129,6 +133,33 @@ pub struct DedupeArgs {
     #[arg(short, long)]
     pub yes: bool,
     /// List every duplicate.
+    #[arg(short, long)]
+    pub verbose: bool,
+}
+
+/// Arguments for `compare`.
+#[derive(Debug, Args, Clone)]
+pub struct CompareArgs {
+    /// Folders to compare. The FIRST one is the primary: its copy of a duplicated file is
+    /// kept, moves go to its `_Duplicates/`, and merges gather everything into it.
+    #[arg(required = true, num_args = 1..)]
+    pub paths: Vec<PathBuf>,
+    #[command(flatten)]
+    pub filter: FilterArgs,
+    /// How many folder levels to search inside each folder (default: all).
+    #[arg(short, long, value_parser = clap::value_parser!(u32).range(1..))]
+    pub depth: Option<u32>,
+    /// What to do with duplicated content; asked interactively if omitted
+    /// (without a terminal, `leave` is assumed).
+    #[arg(short, long, value_enum)]
+    pub action: Option<CompareAction>,
+    /// Show the plan without changing anything.
+    #[arg(short = 'n', long)]
+    pub dry_run: bool,
+    /// Do not ask for confirmation.
+    #[arg(short, long)]
+    pub yes: bool,
+    /// List every duplicate group.
     #[arg(short, long)]
     pub verbose: bool,
 }
@@ -224,6 +255,21 @@ mod tests {
     #[test]
     fn depth_zero_is_rejected() {
         assert!(Cli::try_parse_from(["tidy-up", "organize", "--depth", "0"]).is_err());
+    }
+
+    #[test]
+    fn compare_takes_many_folders_and_an_action() {
+        let Some(Command::Compare(args)) =
+            parse(&["compare", "a", "b", "c", "--action", "merge", "-n", "-x", "tmp"]).command
+        else {
+            panic!("expected compare");
+        };
+        assert_eq!(args.paths, [PathBuf::from("a"), PathBuf::from("b"), PathBuf::from("c")]);
+        assert_eq!(args.action, Some(CompareAction::Merge));
+        assert!(args.dry_run && !args.yes);
+        assert_eq!(args.filter.ignore_ext, ["tmp"]);
+        assert!(Cli::try_parse_from(["tidy-up", "compare"]).is_err(), "needs a folder");
+        assert!(Cli::try_parse_from(["tidy-up", "compare", "a", "--action", "shred"]).is_err());
     }
 
     #[test]

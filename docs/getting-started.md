@@ -79,6 +79,22 @@ tidy-up dedupe ~/Downloads       # isolates extra copies into _Duplicates/
 tidy-up purge ~/Downloads        # permanently deletes them (asks first)
 ```
 
+**Do these three backup folders hold the same thing?**
+
+```sh
+tidy-up compare D:\Photos E:\PhotoBackup F:\OldLaptop\Photos
+```
+
+Read the "How they compare" section. Then act on it:
+
+```sh
+tidy-up compare D:\Photos E:\PhotoBackup --action move    # extras aside, undoable
+tidy-up compare D:\Photos E:\PhotoBackup --action merge   # everything into D:\Photos
+tidy-up compare D:\Photos E:\PhotoBackup --action delete  # permanent, verified first
+```
+
+List the folder you trust most first. Its copies are the ones that stay.
+
 **Gather all repos into one folder:**
 
 ```sh

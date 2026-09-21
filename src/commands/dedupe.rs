@@ -35,14 +35,14 @@ pub fn run(args: &DedupeArgs) -> Result<()> {
     spinner.finish_and_clear();
     let scanned = scanned?;
     ui::info(&format!(
-        "Scanned {} — {} to compare",
+        "Scanned {}: {} to compare",
         root.display(),
         ui::plural(scanned.files.len(), "file")
     ));
 
-    let spinner = ui::spinner("Comparing file contents");
-    let report = find_duplicates(&scanned.files, &|| spinner.inc(1));
-    spinner.finish_and_clear();
+    let bar = ui::HashBar::new();
+    let report = find_duplicates(&scanned.files, &bar);
+    bar.finish();
 
     if !report.unreadable.is_empty() {
         ui::warn(&format!(
@@ -72,16 +72,16 @@ pub fn run(args: &DedupeArgs) -> Result<()> {
         return Ok(());
     }
 
-    let bar = ui::progress_bar(plan.moves.len(), "Isolating duplicates");
-    let executed = execute(&plan, Operation::Dedupe, |done, _| bar.set_position(done as u64));
-    bar.finish_and_clear();
+    let bar = ui::TransferBar::new("Isolating");
+    let executed = execute(&plan, Operation::Dedupe, |p| bar.update(p));
+    bar.finish();
     let executed = executed?;
     print_execution(&root, &executed);
 
     let report_path = write_report(&root, &executed.journal_id, &report.groups)?;
     ui::heading("Recommendation");
     ui::info(&format!(
-        "Review {DUPLICATES_DIR}/ — deleting it would free {}.",
+        "Review {DUPLICATES_DIR}/. Deleting it would free {}.",
         ui::format_size(report.reclaimable_bytes())
     ));
     ui::hint(&format!("Full report: {}", report_path.display()));
@@ -140,6 +140,6 @@ pub fn purge(args: &PurgeArgs) -> Result<()> {
         return Ok(());
     }
     let (files, bytes) = purge_duplicates(&root)?;
-    ui::success(&format!("Deleted {} — freed {}", ui::plural(files, "file"), ui::format_size(bytes)));
+    ui::success(&format!("Deleted {}, freed {}", ui::plural(files, "file"), ui::format_size(bytes)));
     Ok(())
 }

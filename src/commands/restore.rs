@@ -39,7 +39,7 @@ pub fn run(args: &RestoreArgs) -> Result<()> {
         (None, false) => active.pop().into_iter().collect(),
     };
     if selected.is_empty() {
-        ui::success("Nothing to restore — no active runs recorded for this folder.");
+        ui::success("Nothing to restore: no active runs recorded for this folder.");
         return Ok(());
     }
     for mut journal in selected {
@@ -102,7 +102,7 @@ fn print_report(root: &Path, report: &RestoreReport, dry_run: bool) {
     }
     let problems: [(&str, Vec<String>); 3] = [
         (
-            "left in place — original name is taken (use --on-conflict rename)",
+            "left in place, original name is taken (use --on-conflict rename)",
             report.conflicts.iter().map(|p| ui::rel(root, p)).collect(),
         ),
         (
@@ -111,7 +111,7 @@ fn print_report(root: &Path, report: &RestoreReport, dry_run: bool) {
         ),
         (
             "failed",
-            report.failed.iter().map(|(p, why)| format!("{} — {why}", ui::rel(root, p))).collect(),
+            report.failed.iter().map(|(p, why)| format!("{}: {why}", ui::rel(root, p))).collect(),
         ),
     ];
     for (label, items) in problems.iter().filter(|(_, items)| !items.is_empty()) {

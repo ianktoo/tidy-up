@@ -9,7 +9,7 @@
 //! |-------|--------|----------------|
 //! | classify | [`category`], [`rules`], [`projects`] | what a file is, and what to leave alone |
 //! | discover | [`scan`] | walk a folder into eligible files + skipped entries |
-//! | decide | [`plan`], [`dedupe`] | pure, reviewable lists of moves |
+//! | decide | [`plan`], [`dedupe`], [`compare`] | pure, reviewable lists of moves |
 //! | act | [`executor`], [`fsops`] | perform moves safely, never overwriting |
 //! | remember | [`journal`] | append-only JSON Lines undo log |
 //! | undo | [`restore`] | reverse a journal |
@@ -25,14 +25,15 @@
 //! let root = std::path::Path::new("C:/Users/me/Downloads");
 //! let options = ScanOptions { max_depth: 1, rules: IgnoreRules::new(), skip_root_dirs: organize_skip_dirs() };
 //! let plan = build_organize_plan(root, &scan(root, &options)?, ProjectPolicy::Keep);
-//! let report = execute(&plan, Operation::Organize, |_done, _total| {})?;
-//! println!("journal {} — {} moved", report.journal_id, report.moved);
+//! let report = execute(&plan, Operation::Organize, |_progress| {})?;
+//! println!("journal {}: {} moved", report.journal_id, report.moved);
 //! # Ok(()) }
 //! ```
 
 pub mod category;
 pub mod cli;
 pub mod commands;
+pub mod compare;
 pub mod dedupe;
 pub mod error;
 pub mod executor;

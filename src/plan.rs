@@ -79,10 +79,12 @@ impl Plan {
     pub fn by_folder(&self) -> BTreeMap<String, (usize, u64)> {
         let mut groups: BTreeMap<String, (usize, u64)> = BTreeMap::new();
         for m in &self.moves {
+            // Files landing directly in the root have no destination folder: group key "".
             let folder = m
                 .to
                 .strip_prefix(&self.root)
                 .ok()
+                .filter(|rel| rel.components().count() > 1)
                 .and_then(|rel| rel.components().next())
                 .map_or_else(String::new, |c| c.as_os_str().to_string_lossy().into_owned());
             let entry = groups.entry(folder).or_default();
@@ -157,6 +159,7 @@ mod tests {
             size,
             modified: None,
             depth: 1,
+            source: 0,
         }
     }
 
@@ -215,6 +218,21 @@ mod tests {
         let groups = build_organize_plan(root, &scan, ProjectPolicy::Keep).by_folder();
         assert_eq!(groups["Images"], (2, 40));
         assert_eq!(groups["Documents"], (1, 5));
+    }
+
+    #[test]
+    fn files_landing_in_the_root_are_grouped_under_the_empty_key() {
+        let plan = Plan {
+            root: PathBuf::from("/r"),
+            moves: vec![PlannedMove {
+                from: PathBuf::from("/other/a.txt"),
+                to: PathBuf::from("/r/a.txt"),
+                kind: MoveKind::File,
+                size: 4,
+            }],
+            skipped: vec![],
+        };
+        assert_eq!(plan.by_folder()[""], (1, 4));
     }
 
     #[test]

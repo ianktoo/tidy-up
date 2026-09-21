@@ -163,3 +163,111 @@ fn interactive_menu_needs_a_terminal() {
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("interactive terminal"));
 }
+
+// ---------------------------------------------------------------- compare
+
+fn three_folders() -> (tempfile::TempDir, [std::path::PathBuf; 3]) {
+    let base = tempfile::tempdir().unwrap();
+    let dirs = ["a", "b", "c"].map(|n| base.path().join(n));
+    write(&dirs[0], "keep.txt", "same content");
+    write(&dirs[0], "only-a.txt", "aaa");
+    write(&dirs[1], "copy.txt", "same content");
+    write(&dirs[1], "only-b.txt", "bbb");
+    write(&dirs[2], "dup.txt", "same content");
+    (base, dirs)
+}
+
+#[test]
+fn compare_without_action_or_terminal_is_a_safe_report() {
+    let (_base, [a, b, c]) = three_folders();
+    let out = tidy(&["compare", s(&a), s(&b), s(&c)]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let text = stdout(&out);
+    assert!(text.contains("Duplicated content"));
+    assert!(text.contains("#1") && text.contains("#3"));
+    assert!(text.contains("report only"));
+    assert!(b.join("copy.txt").exists() && c.join("dup.txt").exists());
+    assert!(!a.join(".tidy-up").exists(), "report must not create state");
+}
+
+#[test]
+fn compare_says_when_folders_are_identical() {
+    let base = tempfile::tempdir().unwrap();
+    let (x, y) = (base.path().join("x"), base.path().join("y"));
+    write(&x, "one.txt", "content one");
+    write(&y, "renamed.txt", "content one");
+    let out = tidy(&["compare", s(&x), s(&y)]);
+    assert!(stdout(&out).contains("exactly the same content"));
+}
+
+#[test]
+fn compare_move_then_restore_round_trip() {
+    let (_base, [a, b, c]) = three_folders();
+    let out = tidy(&["compare", s(&a), s(&b), s(&c), "--action", "move", "--yes"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(a.join("keep.txt").exists());
+    assert!(!b.join("copy.txt").exists() && !c.join("dup.txt").exists());
+    assert!(a.join("_Duplicates/Group-001").is_dir());
+    assert!(stdout(&out).contains("tidy-up restore"));
+
+    let out = tidy(&["restore", s(&a), "--yes"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(b.join("copy.txt").exists() && c.join("dup.txt").exists());
+    assert!(!a.join("_Duplicates").exists());
+}
+
+#[test]
+fn compare_merge_gathers_into_first_folder() {
+    let (_base, [a, b, c]) = three_folders();
+    let out = tidy(&["compare", s(&a), s(&b), s(&c), "--action", "merge", "--yes"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(a.join("only-b.txt").exists(), "unique file from B gathered into A");
+    assert!(!b.join("only-b.txt").exists());
+    assert!(a.join("keep.txt").exists());
+}
+
+#[test]
+fn compare_delete_removes_extras_only() {
+    let (_base, [a, b, c]) = three_folders();
+    let out = tidy(&["compare", s(&a), s(&b), s(&c), "-a", "delete", "-y"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(a.join("keep.txt").exists() && a.join("only-a.txt").exists());
+    assert!(!b.join("copy.txt").exists() && !c.join("dup.txt").exists());
+    assert!(b.join("only-b.txt").exists());
+    assert!(!a.join(".tidy-up").exists(), "delete is not journaled");
+}
+
+#[test]
+fn compare_dry_run_changes_nothing() {
+    let (_base, [a, b, c]) = three_folders();
+    for action in ["move", "merge", "delete"] {
+        let out = tidy(&["compare", s(&a), s(&b), s(&c), "--action", action, "-n"]);
+        assert!(out.status.success(), "{action}: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(b.join("copy.txt").exists() && c.join("dup.txt").exists(), "{action}");
+        assert!(!a.join(".tidy-up").exists(), "{action}");
+    }
+}
+
+#[test]
+fn compare_rejects_nested_and_missing_folders_and_lone_merge() {
+    let (_base, [a, ..]) = three_folders();
+    let nested = a.join("inside");
+    fs::create_dir_all(&nested).unwrap();
+    let out = tidy(&["compare", s(&a), s(&nested)]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("overlap"));
+
+    assert!(!tidy(&["compare", s(&a), "/no/such/folder"]).status.success());
+    let out = tidy(&["compare", s(&a), "--action", "merge", "-y"]);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("at least two"));
+    assert_eq!(tidy(&["compare"]).status.code(), Some(2));
+}
+
+#[test]
+fn compare_honours_ignore_flags() {
+    let (_base, [a, b, c]) = three_folders();
+    let out = tidy(&["compare", s(&a), s(&b), s(&c), "-x", "txt", "-a", "delete", "-y"]);
+    assert!(out.status.success());
+    assert!(stdout(&out).contains("No file content is repeated"));
+    assert!(b.join("copy.txt").exists());
+}

@@ -6,7 +6,7 @@ tidy-up [COMMAND]
 
 With no command, the interactive menu starts (requires a terminal).
 Every command takes a folder as its first positional argument; the default is
-the current directory. Aliases: `o` organize, `d` dedupe, `r` restore, `h` history.
+the current directory. Aliases: `o` organize, `d` dedupe, `c` compare, `r` restore, `h` history.
 
 ## `organize`
 
@@ -50,6 +50,40 @@ Accepts the same ignore options as `organize`, plus:
 | `-v, --verbose` | off | List every group |
 
 Project folders are never searched.
+
+## `compare`
+
+Compare two or more folders by content and act on the overlap.
+
+```sh
+tidy-up compare <FOLDER>... [OPTIONS]
+```
+
+The **first folder is the primary**: when content exists in several places, its copy is
+kept, moved copies land in its `_Duplicates/`, and merges gather everything into it.
+Folders must not be inside one another.
+
+The report shows, per folder, how many files are `shared` (content also in another
+folder), `unique` (content found nowhere else) and `repeated inside` (repeated only
+within that folder), then how each pair relates: identical, one contained in the other,
+overlapping, or nothing in common.
+
+| Option | Default | Description |
+|---|---|---|
+| `-a, --action <leave\|move\|merge\|delete>` | ask | What to do with duplicated content. Without a terminal and without this flag, `leave` is assumed (report only) |
+| `-d, --depth <N>` | unlimited | Folder levels to search inside each folder |
+| `-n, --dry-run` | off | Show the plan; change nothing |
+| `-y, --yes` | off | Skip confirmation |
+| `-v, --verbose` | off | List every duplicate group |
+
+Plus the ignore options from `organize` (`-x`, `-i`, `-f`, `--include-shortcuts`, `--include-hidden`).
+
+| Action | Effect | Undoable |
+|---|---|---|
+| `leave` | Report only | n/a |
+| `move` | Extra copies go to `<primary>/_Duplicates/Group-NNN/` | yes, `tidy-up restore <primary>` |
+| `merge` | Files that exist only outside the primary (and kept copies that live outside it) are moved into the primary at the same relative path, clashes renamed `name (1).ext`; extra copies go to `_Duplicates/` | yes, `tidy-up restore <primary>` |
+| `delete` | Extra copies are deleted. Each is re-hashed first and skipped if it, or the kept copy, changed since the scan | **no** |
 
 ## `purge`
 

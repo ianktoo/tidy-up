@@ -81,6 +81,9 @@ pub struct FileEntry {
     pub modified: Option<SystemTime>,
     /// Depth below the scan root (1 = direct child).
     pub depth: usize,
+    /// Index of the scanned folder this file came from (0 unless several folders are
+    /// compared). Lower indexes win when choosing which duplicate to keep.
+    pub source: usize,
 }
 
 /// An entry that was deliberately not processed.
@@ -192,6 +195,7 @@ fn walk(dir: &Path, depth: usize, opts: &ScanOptions, out: &mut ScanResult) -> R
                 size: meta.len(),
                 modified: meta.modified().ok(),
                 depth,
+                source: 0,
             });
         }
     }
