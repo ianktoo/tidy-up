@@ -111,6 +111,16 @@ pub fn create_dirs_tracked(dir: &Path) -> Result<Vec<PathBuf>> {
 /// Uses an atomic rename when possible and falls back to copy + verify + delete
 /// for files when the rename fails (for example across drives).
 pub fn move_path(from: &Path, to: &Path) -> Result<()> {
+    move_path_with(from, to, &|a, b| fs::rename(a, b))
+}
+
+/// [`move_path`] with the rename step injected, so tests can simulate a rename that fails the
+/// way it does between partitions without needing a second partition.
+fn move_path_with(
+    from: &Path,
+    to: &Path,
+    rename: &dyn Fn(&Path, &Path) -> std::io::Result<()>,
+) -> Result<()> {
     if to.exists() {
         return Err(Error::Invalid(format!(
             "refusing to overwrite existing {}",
@@ -120,7 +130,7 @@ pub fn move_path(from: &Path, to: &Path) -> Result<()> {
     if let Some(parent) = to.parent() {
         fs::create_dir_all(parent).at(parent)?;
     }
-    match fs::rename(from, to) {
+    match rename(from, to) {
         Ok(()) => Ok(()),
         Err(rename_error) => {
             let meta = fs::symlink_metadata(from).at(from)?;
@@ -249,6 +259,105 @@ mod tests {
         fs::write(&c, [1u8, 2, 3]).unwrap();
         assert!(copy_verify_remove(&c, &d, 99).is_err());
         assert!(c.exists() && !d.exists());
+    }
+
+    /// What `fs::rename` does between partitions: it fails and the caller must copy instead.
+    fn cross_device(_: &Path, _: &Path) -> std::io::Result<()> {
+        Err(std::io::ErrorKind::CrossesDevices.into())
+    }
+
+    #[test]
+    fn a_rename_that_fails_across_devices_falls_back_to_copy_and_delete() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.bin"), dir.path().join("sub/b.bin"));
+        fs::write(&a, b"payload").unwrap();
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_400_000_000);
+        fs::File::options()
+            .write(true)
+            .open(&a)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+
+        move_path_with(&a, &b, &cross_device).unwrap();
+
+        assert!(
+            !a.exists(),
+            "the source is removed only after the copy is verified"
+        );
+        assert_eq!(fs::read(&b).unwrap(), b"payload");
+        let drift = fs::metadata(&b)
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(old)
+            .unwrap_or_else(|e| e.duration())
+            .as_secs();
+        assert!(drift <= 2, "modified time must survive, drifted {drift}s");
+    }
+
+    #[test]
+    fn a_directory_cannot_be_copied_so_a_failed_rename_leaves_it_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("proj");
+        fs::create_dir_all(src.join("inner")).unwrap();
+        fs::write(src.join("inner/f.txt"), "1").unwrap();
+        let dst = dir.path().join("elsewhere/proj");
+        assert!(move_path_with(&src, &dst, &cross_device).is_err());
+        assert!(src.join("inner/f.txt").exists(), "nothing lost");
+        assert!(!dst.exists(), "nothing half-created");
+    }
+
+    #[test]
+    fn a_failed_rename_never_overwrites_an_existing_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        fs::write(&a, "new").unwrap();
+        fs::write(&b, "existing").unwrap();
+        assert!(move_path_with(&a, &b, &cross_device).is_err());
+        assert_eq!(fs::read_to_string(&b).unwrap(), "existing");
+        assert_eq!(fs::read_to_string(&a).unwrap(), "new");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_copy_fallback_preserves_unix_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("run.sh"), dir.path().join("moved.sh"));
+        fs::write(&a, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&a, fs::Permissions::from_mode(0o750)).unwrap();
+        move_path_with(&a, &b, &cross_device).unwrap();
+        assert_eq!(
+            fs::metadata(&b).unwrap().permissions().mode() & 0o777,
+            0o750
+        );
+    }
+
+    /// File systems differ (Linux is case sensitive, Windows and default macOS are not), so
+    /// the property is stated in terms of what *this* file system says exists.
+    #[test]
+    fn unique_names_never_collide_on_case_sensitive_or_insensitive_file_systems() {
+        let dir = tempfile::tempdir().unwrap();
+        let lower = dir.path().join("photo.jpg");
+        fs::write(&lower, "x").unwrap();
+        let insensitive = dir.path().join("PHOTO.JPG").exists();
+
+        let wanted = dir.path().join("PHOTO.JPG");
+        let got = unique_path(&wanted, &HashSet::new());
+        assert!(
+            !got.exists(),
+            "the returned name must be free on this file system"
+        );
+        if insensitive {
+            assert_eq!(
+                got,
+                dir.path().join("PHOTO (1).JPG"),
+                "case-insensitive: it clashes"
+            );
+        } else {
+            assert_eq!(got, wanted, "case-sensitive: it is a different file");
+        }
     }
 
     #[test]

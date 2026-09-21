@@ -30,13 +30,20 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
 
+  # The full suite on every operating system and CPU architecture we ship for.
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os:
+          - ubuntu-latest # Linux x64
+          - ubuntu-24.04-arm # Linux arm64
+          - macos-latest # macOS arm64 (Apple Silicon)
+          - macos-15-intel # macOS x64 (Intel)
+          - windows-latest # Windows x64
+          - windows-11-arm # Windows arm64
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -44,10 +51,73 @@ jobs:
       - run: cargo test --locked --all-targets
       - run: cargo test --locked --doc
 
+  # The static musl build is what runs in minimal containers, so test that binary too.
+  musl:
+    name: Test (Linux musl, static)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo test --locked --all-targets --target x86_64-unknown-linux-musl
+
+  # Cargo.toml promises Rust 1.85; make sure that stays true.
+  msrv:
+    name: Test (Rust 1.85, minimum supported)
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked --all-targets
+
+  # Moving files between partitions (rename fails, so copy + verify + delete) can only be
+  # tested with two real volumes. Each runner gets a second one, and the tests are told they
+  # must run (TIDY_UP_REQUIRE_CROSS_VOLUME) so a missing volume fails instead of skipping.
+  cross-volume:
+    name: Cross-volume (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      TIDY_UP_REQUIRE_CROSS_VOLUME: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Second volume (Linux, a tmpfs)
+        if: runner.os == 'Linux'
+        run: echo "TIDY_UP_OTHER_VOLUME=/dev/shm" >> "$GITHUB_ENV"
+
+      - name: Second volume (macOS, a 64 MiB RAM disk)
+        if: runner.os == 'macOS'
+        run: |
+          device="$(hdiutil attach -nomount ram://131072 | xargs)"
+          diskutil erasevolume HFS+ TidyUpTest "$device"
+          sudo chmod 777 /Volumes/TidyUpTest
+          echo "TIDY_UP_OTHER_VOLUME=/Volumes/TidyUpTest" >> "$GITHUB_ENV"
+
+      - name: Second volume (Windows, the D: drive)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path 'D:\')) { throw 'this runner has no D: drive' }
+          "TIDY_UP_OTHER_VOLUME=D:\" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked --test cross_volume -- --nocapture
+
   # Builds every platform's binary. On pushes to main these are the "latest main" artifacts;
-  # on pull requests it proves that all targets still compile before merging.
+  # on pull requests into main it proves that all targets still compile before merging.
   build:
     name: Build binaries
     if: github.ref == 'refs/heads/main' || github.base_ref == 'main'
-    needs: [lint, test]
+    needs: [lint, test, musl, msrv, cross-volume]
     uses: ./.github/workflows/build.yml

@@ -315,6 +315,67 @@ mod tests {
         assert_eq!(names(&result), ["b.txt"]);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_hidden_and_system_attributes_are_honoured() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(dir.path(), "plain.txt");
+        touch(dir.path(), "attr-hidden.txt");
+        touch(dir.path(), "attr-system.txt");
+        for (file, flag) in [("attr-hidden.txt", "+h"), ("attr-system.txt", "+s")] {
+            let status = std::process::Command::new("attrib")
+                .arg(flag)
+                .arg(dir.path().join(file))
+                .status()
+                .expect("attrib is part of Windows");
+            assert!(status.success());
+        }
+        let hidden = scan(dir.path(), &opts(1)).unwrap();
+        assert_eq!(names(&hidden), ["plain.txt"]);
+        assert_eq!(
+            hidden
+                .skipped
+                .iter()
+                .filter(|s| s.reason == SkipReason::Hidden)
+                .count(),
+            2
+        );
+
+        let mut options = opts(1);
+        options.rules = IgnoreRules::new().include_hidden(true);
+        assert_eq!(scan(dir.path(), &options).unwrap().files.len(), 3);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn names_that_are_not_valid_utf8_are_skipped_not_mangled() {
+        use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+        let dir = tempfile::tempdir().unwrap();
+        touch(dir.path(), "fine.txt");
+        let odd = dir.path().join(OsStr::from_bytes(b"caf\xe9.txt"));
+        fs::write(&odd, "latin-1 name").unwrap();
+        let result = scan(dir.path(), &opts(1)).unwrap();
+        assert_eq!(names(&result), ["fine.txt"]);
+        assert!(
+            result
+                .skipped
+                .iter()
+                .any(|s| s.reason == SkipReason::UnsupportedName)
+        );
+        assert!(odd.exists(), "the file itself is untouched");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_dotfiles_and_dot_directories_count_as_hidden() {
+        let dir = tempfile::tempdir().unwrap();
+        touch(dir.path(), ".bashrc");
+        touch(dir.path(), ".config/app/settings.toml");
+        touch(dir.path(), "visible.txt");
+        let result = scan(dir.path(), &opts(usize::MAX)).unwrap();
+        assert_eq!(names(&result), ["visible.txt"]);
+    }
+
     #[test]
     fn missing_root_is_an_error() {
         assert!(scan(Path::new("/no/such/dir/anywhere"), &opts(1)).is_err());
