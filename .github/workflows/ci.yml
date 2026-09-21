@@ -103,7 +103,7 @@ jobs:
           sudo chmod 777 /Volumes/TidyUpTest
           echo "TIDY_UP_OTHER_VOLUME=/Volumes/TidyUpTest" >> "$GITHUB_ENV"
 
-      - name: Second volume (Windows, the D: drive)
+      - name: "Second volume (Windows, the D: drive)"
         if: runner.os == 'Windows'
         shell: pwsh
         run: |

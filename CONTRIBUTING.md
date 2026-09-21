@@ -35,6 +35,13 @@ cargo test
 cargo doc --no-deps
 ```
 
+If you change anything under `.github/`, also lint the workflows. A single YAML mistake makes GitHub
+reject a whole workflow file with no useful message (an unquoted `: ` inside a step name is enough):
+
+```sh
+pip install actionlint-py && actionlint      # or: docker run --rm -v "$PWD:/repo" -w /repo rhysd/actionlint
+```
+
 ## Branches and pull requests
 
 | Branch | Purpose |
