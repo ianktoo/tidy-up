@@ -23,6 +23,38 @@ pub fn resolve_root(path: &Path) -> Result<PathBuf> {
     Ok(strip_verbatim(canonical))
 }
 
+/// Like [`resolve_root`], but the folder may not exist yet: the nearest existing parent is
+/// resolved and the missing tail is appended. Used for destinations that will be created.
+pub fn resolve_maybe_new(path: &Path) -> Result<PathBuf> {
+    if path.exists() {
+        return resolve_root(path);
+    }
+    let mut tail = Vec::new();
+    let mut current = path;
+    let base = loop {
+        let Some(name) = current.file_name() else {
+            return Err(Error::Invalid(format!(
+                "{} has no existing parent folder",
+                path.display()
+            )));
+        };
+        tail.push(name.to_owned());
+        current = current.parent().unwrap_or(Path::new(""));
+        let probe = if current.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            current
+        };
+        if probe.exists() {
+            break resolve_root(probe)?;
+        }
+    };
+    Ok(tail
+        .into_iter()
+        .rev()
+        .fold(base, |acc, part| acc.join(part)))
+}
+
 fn strip_verbatim(path: PathBuf) -> PathBuf {
     let text = path.to_string_lossy();
     match text.strip_prefix(r"\\?\") {
@@ -105,7 +137,16 @@ pub fn move_path(from: &Path, to: &Path) -> Result<()> {
 }
 
 fn copy_verify_remove(from: &Path, to: &Path, expected_len: u64) -> Result<()> {
+    let modified = fs::metadata(from).and_then(|m| m.modified()).ok();
     fs::copy(from, to).at(to)?;
+    // A rename keeps timestamps, so a copy must too, or moving between partitions would
+    // reset every file's modified date. Best effort: some file systems refuse it.
+    if let Some(modified) = modified {
+        let _ = fs::File::options()
+            .write(true)
+            .open(to)
+            .and_then(|f| f.set_modified(modified));
+    }
     let copied_ok = fs::metadata(to).is_ok_and(|m| m.len() == expected_len);
     if !copied_ok {
         let _ = fs::remove_file(to);
@@ -208,6 +249,43 @@ mod tests {
         fs::write(&c, [1u8, 2, 3]).unwrap();
         assert!(copy_verify_remove(&c, &d, 99).is_err());
         assert!(c.exists() && !d.exists());
+    }
+
+    #[test]
+    fn copy_fallback_preserves_the_modified_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a.bin"), dir.path().join("b.bin"));
+        fs::write(&a, [1u8, 2, 3]).unwrap();
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_500_000_000);
+        fs::File::options()
+            .write(true)
+            .open(&a)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        copy_verify_remove(&a, &b, 3).unwrap();
+        let after = fs::metadata(&b).unwrap().modified().unwrap();
+        let drift = after
+            .duration_since(old)
+            .unwrap_or_else(|e| e.duration())
+            .as_secs();
+        assert!(
+            drift <= 2,
+            "modified time should survive the copy, drifted {drift}s"
+        );
+    }
+
+    #[test]
+    fn resolve_maybe_new_handles_existing_and_missing_tails() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = resolve_root(dir.path()).unwrap();
+        assert_eq!(resolve_maybe_new(dir.path()).unwrap(), base);
+        let future = dir.path().join("a").join("b");
+        assert_eq!(
+            resolve_maybe_new(&future).unwrap(),
+            base.join("a").join("b")
+        );
+        assert!(!future.exists(), "resolving must not create anything");
     }
 
     #[test]

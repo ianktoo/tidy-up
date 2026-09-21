@@ -1,7 +1,9 @@
 //! Command implementations: glue between the CLI, the engine and the terminal UI.
 
+pub mod analyze;
 pub mod compare;
 pub mod dedupe;
+pub mod distribute;
 pub mod interactive;
 pub mod organize;
 pub mod restore;
@@ -26,6 +28,8 @@ pub fn dispatch(cli: Cli) -> Result<()> {
         Some(Command::Organize(args)) => organize::run(&args),
         Some(Command::Dedupe(args)) => dedupe::run(&args),
         Some(Command::Compare(args)) => compare::run(&args),
+        Some(Command::Analyze(args)) => analyze::run(&args),
+        Some(Command::Distribute(args)) => distribute::run(&args),
         Some(Command::Restore(args)) => restore::run(&args),
         Some(Command::History(args)) => restore::history(&args),
         Some(Command::Purge(args)) => dedupe::purge(&args),

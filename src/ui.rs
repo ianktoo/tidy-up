@@ -28,6 +28,21 @@ pub fn format_size(bytes: u64) -> String {
     }
 }
 
+/// A fixed-width text bar for a fraction in `0.0..=1.0` (values outside are clamped).
+pub fn bar(fraction: f64, width: usize) -> String {
+    let filled = ((fraction.clamp(0.0, 1.0) * width as f64).round() as usize).min(width);
+    format!(
+        "{}{}",
+        "\u{2588}".repeat(filled),
+        "\u{2591}".repeat(width - filled)
+    )
+}
+
+/// `48.6%`
+pub fn percent(fraction: f64) -> String {
+    format!("{:.1}%", fraction * 100.0)
+}
+
 /// Renders `path` relative to `root` when possible.
 pub fn rel(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
@@ -97,7 +112,7 @@ pub fn hint(text: &str) {
 pub fn spinner(message: &str) -> ProgressBar {
     let bar = ProgressBar::new_spinner();
     bar.set_style(
-        ProgressStyle::with_template("{spinner:.cyan} {msg} {pos} ")
+        ProgressStyle::with_template("{spinner:.cyan} {msg}")
             .expect("valid template")
             .tick_chars("⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ "),
     );
@@ -305,6 +320,23 @@ mod tests {
         assert_eq!(format_size(1536), "1.5 KiB");
         assert_eq!(format_size(5 * 1024 * 1024 * 1024), "5.0 GiB");
         assert_eq!(format_size(u64::MAX), "16777216.0 TiB");
+    }
+
+    #[test]
+    fn bars_are_fixed_width_and_clamped() {
+        assert_eq!(bar(0.0, 4), "\u{2591}\u{2591}\u{2591}\u{2591}");
+        assert_eq!(bar(0.5, 4), "\u{2588}\u{2588}\u{2591}\u{2591}");
+        assert_eq!(bar(1.0, 4), "\u{2588}\u{2588}\u{2588}\u{2588}");
+        assert_eq!(bar(7.0, 4), bar(1.0, 4));
+        assert_eq!(bar(-3.0, 4), bar(0.0, 4));
+        assert_eq!(bar(0.3, 10).chars().count(), 10);
+    }
+
+    #[test]
+    fn percent_formats_one_decimal() {
+        assert_eq!(percent(0.486), "48.6%");
+        assert_eq!(percent(1.0), "100.0%");
+        assert_eq!(percent(0.0), "0.0%");
     }
 
     #[test]

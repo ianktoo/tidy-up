@@ -355,3 +355,392 @@ fn compare_honours_ignore_flags() {
     assert!(stdout(&out).contains("No file content is repeated"));
     assert!(b.join("copy.txt").exists());
 }
+
+// ---------------------------------------------------------------- analyze
+
+#[test]
+fn analyze_prints_every_section() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "pic.jpg", &"x".repeat(2000));
+    write(dir.path(), "docs/report.pdf", &"x".repeat(500));
+    write(dir.path(), "app/Cargo.toml", "[package]");
+    let out = tidy(&["analyze", s(dir.path())]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = stdout(&out);
+    for section in [
+        "Analysis of",
+        "Partition",
+        "By type",
+        "Largest files",
+        "Largest folders",
+        "Code projects",
+        "By age",
+        "--duplicates",
+    ] {
+        assert!(text.contains(section), "missing `{section}` in:\n{text}");
+    }
+    assert!(text.contains("Images") && text.contains("pic.jpg"));
+    assert!(
+        !dir.path().join(".tidy-up").exists(),
+        "analysis must not write anything"
+    );
+}
+
+#[test]
+fn analyze_json_is_valid_and_complete() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "a.png", "12345");
+    write(dir.path(), "sub/b.txt", "123");
+    let out = tidy(&["analyze", s(dir.path()), "--json", "--top", "1"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid JSON");
+    let report = &json[0];
+    assert_eq!(report["files"], 2);
+    assert_eq!(report["bytes"], 8);
+    assert_eq!(
+        report["largest_files"].as_array().unwrap().len(),
+        1,
+        "--top applies"
+    );
+    assert_eq!(report["by_category"][0]["category"], "Images");
+    assert!(report["disk"]["total"].as_u64().unwrap() > 0);
+    assert!(report["duplicates"].is_null());
+}
+
+#[test]
+fn analyze_duplicates_flag_measures_waste() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "a.bin", &"same".repeat(100));
+    write(dir.path(), "copy/b.bin", &"same".repeat(100));
+    write(dir.path(), "c.bin", "different");
+    let out = tidy(&["analyze", s(dir.path()), "--duplicates", "--json"]);
+    let json: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(json[0]["duplicates"]["extra_copies"], 1);
+    assert_eq!(json[0]["duplicates"]["reclaimable_bytes"], 400);
+    assert!(
+        dir.path().join("copy/b.bin").exists(),
+        "analysis never moves anything"
+    );
+}
+
+#[test]
+fn analyze_handles_several_folders_and_bad_input() {
+    let (a, b) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    write(a.path(), "x.txt", "1");
+    write(b.path(), "y.txt", "22");
+    let out = tidy(&["analyze", s(a.path()), s(b.path()), "--json"]);
+    let json: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(json.as_array().unwrap().len(), 2);
+
+    let out = tidy(&["analyze", "/definitely/not/here"]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("error:"));
+
+    let empty = tempfile::tempdir().unwrap();
+    assert!(stdout(&tidy(&["analyze", s(empty.path())])).contains("No files found"));
+}
+
+// ---------------------------------------------------------------- distribute
+
+fn distribute_fixture() -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    [std::path::PathBuf; 2],
+) {
+    let base = tempfile::tempdir().unwrap();
+    let src = base.path().join("src");
+    for i in 0..10 {
+        write(&src, &format!("f{i}.dat"), "0123456789");
+    }
+    let dests = [base.path().join("d1"), base.path().join("d2")];
+    (base, src, dests)
+}
+
+fn count_files(dir: &Path) -> usize {
+    fn walk(dir: &Path, n: &mut usize) {
+        let Ok(read) = fs::read_dir(dir) else { return };
+        for entry in read.flatten() {
+            let path = entry.path();
+            if path.file_name().is_some_and(|n| n == ".tidy-up") {
+                continue;
+            }
+            if path.is_dir() {
+                walk(&path, n);
+            } else {
+                *n += 1;
+            }
+        }
+    }
+    let mut n = 0;
+    walk(dir, &mut n);
+    n
+}
+
+#[test]
+fn distribute_dry_run_shows_the_split_and_changes_nothing() {
+    let (_base, src, [d1, d2]) = distribute_fixture();
+    let out = tidy(&[
+        "distribute",
+        "--from",
+        s(&src),
+        "--to",
+        s(&d1),
+        s(&d2),
+        "--ratio",
+        "70,30",
+        "--max-fill",
+        "100",
+        "-n",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = stdout(&out);
+    assert!(text.contains("Destinations") && text.contains("#1") && text.contains("#2"));
+    assert!(text.contains("+70 B") && text.contains("+30 B"), "{text}");
+    assert!(text.contains("Sources"));
+    assert!(text.contains("Dry run"));
+    assert_eq!(count_files(&src), 10);
+    assert!(
+        !d1.exists() && !d2.exists(),
+        "a dry run must not even create the destinations"
+    );
+}
+
+#[test]
+fn distribute_moves_by_ratio_and_restore_undoes_it() {
+    let (_base, src, [d1, d2]) = distribute_fixture();
+    let out = tidy(&[
+        "distribute",
+        "--from",
+        s(&src),
+        "--to",
+        s(&d1),
+        s(&d2),
+        "--ratio",
+        "70,30",
+        "--max-fill",
+        "100",
+        "--yes",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!((count_files(&d1), count_files(&d2)), (7, 3));
+    assert_eq!(count_files(&src), 0);
+    assert!(
+        stdout(&out).contains("tidy-up restore"),
+        "tells you how to undo"
+    );
+
+    let history = tidy(&["history", s(&d1)]);
+    assert!(stdout(&history).contains("distribute"));
+
+    let out = tidy(&["restore", s(&d1), "--yes"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(count_files(&src), 10);
+    assert_eq!(count_files(&d1) + count_files(&d2), 0);
+}
+
+#[test]
+fn distribute_limit_caps_how_much_moves() {
+    let (_base, src, [d1, _]) = distribute_fixture();
+    let out = tidy(&[
+        "distribute",
+        "--from",
+        s(&src),
+        "--to",
+        s(&d1),
+        "--limit",
+        "45",
+        "--max-fill",
+        "100",
+        "--yes",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(count_files(&d1), 4, "45 bytes fits four 10-byte files");
+    assert_eq!(count_files(&src), 6);
+    assert!(stdout(&out).contains("left out by --limit"));
+}
+
+#[test]
+fn distribute_layout_organize_sorts_into_category_folders() {
+    let base = tempfile::tempdir().unwrap();
+    let src = base.path().join("src");
+    write(&src, "a.jpg", "1");
+    write(&src, "b.pdf", "2");
+    let dest = base.path().join("out");
+    let out = tidy(&[
+        "distribute",
+        "--from",
+        s(&src),
+        "--to",
+        s(&dest),
+        "--layout",
+        "organize",
+        "--max-fill",
+        "100",
+        "-y",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(dest.join("Images/a.jpg").exists() && dest.join("Documents/b.pdf").exists());
+}
+
+#[test]
+fn distribute_reports_when_nothing_fits() {
+    let (_base, src, [d1, _]) = distribute_fixture();
+    // a 1-byte minimum-free reserve larger than any real disk is impossible, so use a huge one
+    let out = tidy(&[
+        "distribute",
+        "--from",
+        s(&src),
+        "--to",
+        s(&d1),
+        "--min-free",
+        "1000000T",
+        "--yes",
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout(&out).contains("Nothing can be moved"));
+    assert_eq!(count_files(&src), 10, "nothing moved");
+}
+
+#[test]
+fn distribute_rejects_bad_arguments_before_touching_anything() {
+    let (_base, src, [d1, d2]) = distribute_fixture();
+    let fails = |args: &[&str], needle: &str| {
+        let out = tidy(args);
+        assert!(!out.status.success(), "{args:?}");
+        let err = String::from_utf8_lossy(&out.stderr).to_lowercase();
+        assert!(err.contains(needle), "expected `{needle}` in: {err}");
+        assert_eq!(count_files(&src), 10, "{args:?} must not move anything");
+    };
+    // ratio has the wrong number of values
+    fails(
+        &[
+            "distribute",
+            "--from",
+            s(&src),
+            "--to",
+            s(&d1),
+            s(&d2),
+            "--ratio",
+            "1,2,3",
+            "-y",
+        ],
+        "ratio",
+    );
+    // destination inside the source
+    let inside = src.join("inner");
+    fails(
+        &["distribute", "--from", s(&src), "--to", s(&inside), "-y"],
+        "overlap",
+    );
+    // same folder as source and destination
+    fails(
+        &["distribute", "--from", s(&src), "--to", s(&src), "-y"],
+        "overlap",
+    );
+    // missing source
+    fails(
+        &["distribute", "--from", "/no/such/dir", "--to", s(&d1), "-y"],
+        "",
+    );
+    // unparsable size and percentage are usage errors (exit code 2)
+    assert_eq!(
+        tidy(&[
+            "distribute",
+            "--from",
+            s(&src),
+            "--to",
+            s(&d1),
+            "--limit",
+            "lots"
+        ])
+        .status
+        .code(),
+        Some(2)
+    );
+    assert_eq!(
+        tidy(&[
+            "distribute",
+            "--from",
+            s(&src),
+            "--to",
+            s(&d1),
+            "--max-fill",
+            "0"
+        ])
+        .status
+        .code(),
+        Some(2)
+    );
+    assert_eq!(tidy(&["distribute", "--to", s(&d1)]).status.code(), Some(2));
+}
+
+#[test]
+fn distribute_needs_confirmation_or_yes() {
+    let (_base, src, [d1, _]) = distribute_fixture();
+    let out = tidy(&[
+        "distribute",
+        "--from",
+        s(&src),
+        "--to",
+        s(&d1),
+        "--max-fill",
+        "100",
+    ]);
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--yes"));
+    assert_eq!(count_files(&src), 10);
+}
+
+#[test]
+fn help_lists_the_new_commands() {
+    let text = stdout(&tidy(&["--help"]));
+    for word in ["analyze", "distribute", "compare"] {
+        assert!(text.contains(word), "help should mention `{word}`");
+    }
+    let dist = stdout(&tidy(&["distribute", "--help"]));
+    for flag in [
+        "--ratio",
+        "--limit",
+        "--max-fill",
+        "--min-free",
+        "--layout",
+        "--strategy",
+    ] {
+        assert!(
+            dist.contains(flag),
+            "distribute --help should mention {flag}"
+        );
+    }
+}

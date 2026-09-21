@@ -529,3 +529,316 @@ fn delete_skips_copies_that_changed_after_the_scan() {
     assert_eq!(report.deleted, 1);
     assert_eq!(report.skipped.len(), 3);
 }
+
+// ---------------------------------------------------------------- distribute across destinations
+
+use tidy_up::{
+    disk::SystemDisks,
+    distribute::{
+        CollectOptions, Granularity, Layout, Limits, Prefer, Strategy, allocate, build_plan,
+        collect_units, probe_destinations, validate_locations,
+    },
+};
+
+/// Runs the whole distribute pipeline against real folders and returns the journal id.
+fn distribute_for_test(
+    sources: &[PathBuf],
+    dests: &[PathBuf],
+    strategy: Strategy,
+    limits: Limits,
+    layout: Layout,
+    granularity: Granularity,
+    prefer: Prefer,
+) -> (String, Vec<PathBuf>) {
+    let (sources, dests) = validate_locations(sources, dests).unwrap();
+    let destinations = probe_destinations(&dests, &SystemDisks).unwrap();
+    let rules = IgnoreRules::new();
+    let collected = collect_units(
+        &sources,
+        &CollectOptions {
+            layout,
+            granularity,
+            rules: &rules,
+        },
+    )
+    .unwrap();
+    let allocation = allocate(&collected.units, &destinations, &strategy, &limits, prefer).unwrap();
+    let plan = build_plan(&dests[0], &collected.units, &destinations, &allocation);
+    let report = execute(&plan, Operation::Distribute, |_| {}).unwrap();
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    (report.journal_id, dests)
+}
+
+fn open_limits() -> Limits {
+    // real disks in CI can be nearly full; these tests are about the split, not the reserve
+    Limits {
+        max_fill: 1.0,
+        ..Default::default()
+    }
+}
+
+/// Number of files under `root`; a folder that does not exist (for example one the run
+/// created and restore removed again) holds none.
+fn files_under(root: &Path) -> usize {
+    if root.exists() {
+        snapshot(root).len()
+    } else {
+        0
+    }
+}
+
+#[test]
+fn distribute_by_ratio_then_restore_returns_every_file() {
+    let base = tempfile::tempdir().unwrap();
+    let src = resolve_root(&{
+        let p = base.path().join("src");
+        fs::create_dir_all(&p).unwrap();
+        p
+    })
+    .unwrap();
+    for i in 0..10 {
+        write(&src, &format!("f{i}.dat"), "0123456789");
+    }
+    let before = snapshot(&src);
+    let (id, dests) = distribute_for_test(
+        std::slice::from_ref(&src),
+        &[base.path().join("d1"), base.path().join("d2")],
+        Strategy::Ratio(vec![70.0, 30.0]),
+        open_limits(),
+        Layout::Keep,
+        Granularity::Item,
+        Prefer::Largest,
+    );
+
+    assert_eq!((files_under(&dests[0]), files_under(&dests[1])), (7, 3));
+    assert_eq!(files_under(&src), 0, "everything moved out of the source");
+
+    let mut journal = Journal::find(&dests[0], &id).unwrap();
+    assert_eq!(journal.header.operation, Operation::Distribute);
+    let restored = restore(
+        &dests[0],
+        &mut journal,
+        RestoreOptions::default(),
+        |_, _| {},
+    )
+    .unwrap();
+    assert!(restored.is_clean(), "{restored:?}");
+    assert_eq!(snapshot(&src), before);
+    assert_eq!(files_under(&dests[0]) + files_under(&dests[1]), 0);
+}
+
+#[test]
+fn distribute_keeps_folders_together_at_item_granularity_and_splits_at_file_granularity() {
+    let make = || {
+        let base = tempfile::tempdir().unwrap();
+        let src = base.path().join("src");
+        for album in ["trip", "party", "work"] {
+            for n in 0..4 {
+                write(&src, &format!("{album}/{n}.jpg"), "photo");
+            }
+        }
+        (base, src)
+    };
+
+    let (base, src) = make();
+    let (_, dests) = distribute_for_test(
+        std::slice::from_ref(&src),
+        &[base.path().join("d1"), base.path().join("d2")],
+        Strategy::Even,
+        open_limits(),
+        Layout::Keep,
+        Granularity::Item,
+        Prefer::Largest,
+    );
+    for album in ["trip", "party", "work"] {
+        let homes = dests.iter().filter(|d| d.join(album).exists()).count();
+        assert_eq!(
+            homes, 1,
+            "album `{album}` must not be split across destinations"
+        );
+    }
+
+    let (base, src) = make();
+    let (_, dests) = distribute_for_test(
+        &[src],
+        &[base.path().join("d1"), base.path().join("d2")],
+        Strategy::Even,
+        open_limits(),
+        Layout::Keep,
+        Granularity::File,
+        Prefer::Largest,
+    );
+    assert_eq!((files_under(&dests[0]), files_under(&dests[1])), (6, 6));
+}
+
+#[test]
+fn distribute_limit_and_preference_choose_what_moves() {
+    let base = tempfile::tempdir().unwrap();
+    let src = base.path().join("src");
+    write(&src, "huge.bin", &"x".repeat(1000));
+    write(&src, "big.bin", &"x".repeat(600));
+    write(&src, "small.bin", &"x".repeat(100));
+    let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    fs::File::options()
+        .write(true)
+        .open(src.join("small.bin"))
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    let limits = Limits {
+        max_bytes: Some(700),
+        ..open_limits()
+    };
+
+    let (_, dests) = distribute_for_test(
+        std::slice::from_ref(&src),
+        &[base.path().join("d1")],
+        Strategy::Even,
+        limits,
+        Layout::Keep,
+        Granularity::Item,
+        Prefer::Largest,
+    );
+    // huge (1000) exceeds the limit, so big (600) goes; small (100) also fits under 700
+    assert!(dests[0].join("big.bin").exists() && dests[0].join("small.bin").exists());
+    assert!(src.join("huge.bin").exists(), "over the limit, so it stays");
+
+    let base = tempfile::tempdir().unwrap();
+    let src = base.path().join("src");
+    write(&src, "new-big.bin", &"x".repeat(600));
+    write(&src, "old-small.bin", &"x".repeat(100));
+    fs::File::options()
+        .write(true)
+        .open(src.join("old-small.bin"))
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    let limits = Limits {
+        max_bytes: Some(650),
+        ..open_limits()
+    };
+    let (_, dests) = distribute_for_test(
+        std::slice::from_ref(&src),
+        &[base.path().join("d1")],
+        Strategy::Even,
+        limits,
+        Layout::Keep,
+        Granularity::Item,
+        Prefer::Oldest,
+    );
+    // oldest first: old-small (100) goes, then new-big (600) would exceed 650 and stays
+    assert!(dests[0].join("old-small.bin").exists());
+    assert!(!dests[0].join("new-big.bin").exists());
+    assert!(src.join("new-big.bin").exists());
+}
+
+#[test]
+fn distribute_can_organize_into_category_folders_at_the_destination() {
+    let base = tempfile::tempdir().unwrap();
+    let src = base.path().join("src");
+    write(&src, "trip/beach.jpg", "1");
+    write(&src, "report.pdf", "2");
+    write(&src, "notes.txt", "3");
+    let (id, dests) = distribute_for_test(
+        std::slice::from_ref(&src),
+        &[base.path().join("d1")],
+        Strategy::Even,
+        open_limits(),
+        Layout::Organize,
+        Granularity::Item,
+        Prefer::Largest,
+    );
+    assert!(dests[0].join("Images/beach.jpg").exists());
+    assert!(dests[0].join("Documents/report.pdf").exists());
+    assert!(dests[0].join("Text Files/notes.txt").exists());
+
+    let mut journal = Journal::find(&dests[0], &id).unwrap();
+    restore(
+        &dests[0],
+        &mut journal,
+        RestoreOptions::default(),
+        |_, _| {},
+    )
+    .unwrap();
+    assert!(
+        src.join("trip/beach.jpg").exists(),
+        "restore puts files back in their original folders"
+    );
+    assert!(src.join("report.pdf").exists() && src.join("notes.txt").exists());
+}
+
+#[test]
+fn distribute_moves_a_git_project_whole_including_hidden_files() {
+    let base = tempfile::tempdir().unwrap();
+    let src = base.path().join("src");
+    write(&src, "repo/.git/HEAD", "ref: refs/heads/main");
+    write(&src, "repo/Cargo.toml", "[package]");
+    write(&src, "repo/src/main.rs", "fn main(){}");
+    let (id, dests) = distribute_for_test(
+        std::slice::from_ref(&src),
+        &[base.path().join("d1")],
+        Strategy::Even,
+        open_limits(),
+        Layout::Keep,
+        Granularity::Item,
+        Prefer::Largest,
+    );
+    assert!(dests[0].join("repo/.git/HEAD").exists());
+    assert!(dests[0].join("repo/src/main.rs").exists());
+    let mut journal = Journal::find(&dests[0], &id).unwrap();
+    restore(
+        &dests[0],
+        &mut journal,
+        RestoreOptions::default(),
+        |_, _| {},
+    )
+    .unwrap();
+    assert!(src.join("repo/.git/HEAD").exists());
+}
+
+#[test]
+fn merging_several_sources_into_one_destination() {
+    let base = tempfile::tempdir().unwrap();
+    let (a, b) = (base.path().join("a"), base.path().join("b"));
+    write(&a, "one.txt", "1");
+    write(&b, "two.txt", "22");
+    write(&b, "one.txt", "clash");
+    let (_, dests) = distribute_for_test(
+        &[a, b],
+        &[base.path().join("all")],
+        Strategy::Even,
+        open_limits(),
+        Layout::Keep,
+        Granularity::Item,
+        Prefer::Largest,
+    );
+    assert_eq!(
+        files_under(&dests[0]),
+        3,
+        "nothing is overwritten: the clash is renamed"
+    );
+    assert!(dests[0].join("two.txt").exists());
+}
+
+#[test]
+fn analysis_of_a_real_tree_is_consistent_with_a_snapshot() {
+    use tidy_up::analyze::{AnalyzeOptions, analyze};
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "a.jpg", "12345");
+    write(dir.path(), "docs/b.pdf", "123");
+    write(dir.path(), "docs/deep/c.txt", "1");
+    let report = analyze(
+        dir.path(),
+        &AnalyzeOptions::default(),
+        &SystemDisks,
+        &mut |_| {},
+    )
+    .unwrap();
+    let snap = snapshot(dir.path());
+    assert_eq!(report.files as usize, snap.len());
+    assert_eq!(
+        report.bytes,
+        snap.values().map(|c| c.len() as u64).sum::<u64>()
+    );
+    assert!(report.disk.is_some());
+}

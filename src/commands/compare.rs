@@ -119,7 +119,7 @@ fn choose_action(
     if has_duplicates {
         options.push((
             CompareAction::Move,
-            format!("Move extra copies into {primary}\\{DUPLICATES_DIR} for review"),
+            format!("Move extra copies into {DUPLICATES_DIR}/ inside {primary} for review"),
         ));
     }
     if folder_count > 1 {

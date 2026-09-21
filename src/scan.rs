@@ -208,7 +208,7 @@ fn walk(dir: &Path, depth: usize, opts: &ScanOptions, out: &mut ScanResult) -> R
 }
 
 /// Dot-files everywhere, plus the HIDDEN/SYSTEM attributes on Windows.
-fn is_hidden(name: &str, meta: &Metadata) -> bool {
+pub(crate) fn is_hidden(name: &str, meta: &Metadata) -> bool {
     name.starts_with('.') || has_hidden_attribute(meta)
 }
 

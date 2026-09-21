@@ -37,6 +37,8 @@ pub enum Operation {
     Dedupe,
     /// Comparing several folders, then moving or merging their duplicated content.
     Compare,
+    /// Spreading files across several destinations.
+    Distribute,
 }
 
 impl std::fmt::Display for Operation {
@@ -45,6 +47,7 @@ impl std::fmt::Display for Operation {
             Operation::Organize => "organize",
             Operation::Dedupe => "dedupe",
             Operation::Compare => "compare",
+            Operation::Distribute => "distribute",
         })
     }
 }

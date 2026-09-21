@@ -35,19 +35,26 @@ const MARKER_EXTENSIONS: &[&str] = &[
     "xcodeproj",
 ];
 
+/// Whether a directory entry named `name` marks its parent as a project root.
+///
+/// Cheap (no allocation), so scanners can check names while they iterate a directory.
+pub fn is_marker(name: &str) -> bool {
+    MARKERS.iter().any(|m| name.eq_ignore_ascii_case(m))
+        || Path::new(name).extension().is_some_and(|ext| {
+            MARKER_EXTENSIONS
+                .iter()
+                .any(|m| ext.eq_ignore_ascii_case(m))
+        })
+}
+
 /// Returns `true` if `dir` looks like the root of a software project.
 pub fn is_project_dir(dir: &Path) -> bool {
     let Ok(entries) = fs::read_dir(dir) else {
         return false;
     };
-    entries.filter_map(|e| e.ok()).any(|entry| {
-        let name = entry.file_name().to_string_lossy().to_lowercase();
-        MARKERS.contains(&name.as_str())
-            || Path::new(&name)
-                .extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|ext| MARKER_EXTENSIONS.contains(&ext))
-    })
+    entries
+        .filter_map(|e| e.ok())
+        .any(|entry| is_marker(&entry.file_name().to_string_lossy()))
 }
 
 #[cfg(test)]
@@ -89,5 +96,15 @@ mod tests {
             dir_with(&["holiday.jpg", "notes.txt"]).path()
         ));
         assert!(!is_project_dir(Path::new("/definitely/not/a/dir")));
+    }
+
+    #[test]
+    fn marker_check_works_on_bare_names() {
+        for name in ["Cargo.toml", ".GIT", "My.SLN", "go.mod"] {
+            assert!(is_marker(name), "{name}");
+        }
+        for name in ["notes.txt", "sln", "cargo.txt", ""] {
+            assert!(!is_marker(name), "{name}");
+        }
     }
 }
