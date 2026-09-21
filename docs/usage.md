@@ -6,7 +6,7 @@ tidy-up [COMMAND]
 
 With no command, the interactive menu starts (requires a terminal).
 Every command takes a folder as its first positional argument; the default is
-the current directory. Aliases: `o` organize, `d` dedupe, `c` compare, `r` restore, `h` history.
+the current directory. Aliases: `o` organize, `d` dedupe, `c` compare, `a` analyze, `x` distribute, `r` restore, `h` history.
 
 ## `organize`
 
@@ -84,6 +84,53 @@ Plus the ignore options from `organize` (`-x`, `-i`, `-f`, `--include-shortcuts`
 | `move` | Extra copies go to `<primary>/_Duplicates/Group-NNN/` | yes, `tidy-up restore <primary>` |
 | `merge` | Files that exist only outside the primary (and kept copies that live outside it) are moved into the primary at the same relative path, clashes renamed `name (1).ext`; extra copies go to `_Duplicates/` | yes, `tidy-up restore <primary>` |
 | `delete` | Extra copies are deleted. Each is re-hashed first and skipped if it, or the kept copy, changed since the scan | **no** |
+
+## `analyze`
+
+Read-only report of where the space goes. Reads metadata only (never file contents unless
+`--duplicates` is given), keeps memory bounded, and writes nothing.
+
+```sh
+tidy-up analyze [PATH]... [OPTIONS]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-t, --top <N>` | `10` | Entries in each "largest" list (`0` to hide them) |
+| `--json` | off | Print JSON (an array, one object per folder) instead of a report |
+| `--duplicates` | off | Also measure space wasted by duplicate files; reads file contents, so it is slower |
+
+The report has: file, folder and byte totals; usage of the partition holding the folder; a breakdown by
+[file type](file-types.md); the largest files and folders (folder sizes include everything below them);
+code projects (outermost only, so `node_modules` inside a project is part of it); data by last-modified
+age (under 30 days, under 1 year, under 3 years, older); empty files and folders; and duplicate waste.
+Sizes are apparent sizes (the file length), not disk allocation. Symbolic links are never followed.
+
+## `distribute`
+
+Move files from full folders into other places (usually other partitions), controlling how much,
+how it is split, and how full each destination may get. Full guide: [distribute.md](distribute.md).
+
+```sh
+tidy-up distribute --from <FOLDER>... --to <FOLDER>... [OPTIONS]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--from <FOLDER>...` | required | Sources to move files out of |
+| `--to <FOLDER>...` | required | Destinations (created if missing). The undo journal lives in the first |
+| `--ratio <N,N,...>` | | Split the moved data in these proportions, one number per destination |
+| `--strategy <fill\|free\|even>` | `fill` | Without a ratio: equalise fill %, proportional to free space, or equal shares |
+| `--limit <SIZE>` | none | Move at most this much (`200GiB`, `500M`; units are binary) |
+| `--max-fill <PERCENT>` | `90` | Never fill a destination's partition beyond this |
+| `--min-free <SIZE>` | `0` | Always keep at least this much free on every destination |
+| `--prefer <largest\|oldest>` | `largest` | What to move first when a limit applies |
+| `--layout <keep\|organize>` | `keep` | Keep the folder structure, or sort into category folders |
+| `--granularity <item\|file>` | `item` | Move whole top-level items (folders stay together) or single files |
+| `-n`, `-y`, `-v` | | Dry run, skip confirmation, list every item |
+
+Plus the ignore options from `organize`. Sources and destinations must be separate folders. Undo with
+`tidy-up restore <first destination>`.
 
 ## `purge`
 

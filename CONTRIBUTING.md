@@ -60,6 +60,9 @@ src/
   plan.rs         organize plan: pure data, no side effects
   dedupe.rs       duplicate detection, quarantine plan, verified delete
   compare.rs      multi-folder comparison, merge planning
+  analyze.rs      read-only space analysis (metadata only, bounded memory)
+  distribute.rs   spreading files across destinations: capacity, ratios, fill levels
+  disk.rs         partition free space, size and percent parsing
   executor.rs     performs a plan, journaling every change
   fsops.rs        safe move / unique-name helpers
   journal.rs      append-only JSON Lines undo log
@@ -93,6 +96,13 @@ before touching the executor, journal or restore code.
 4. Add unit tests for the engine, an end-to-end test in `tests/workflow.rs` that proves
    *action then restore returns the exact original state*, and CLI tests in `tests/cli.rs`.
 5. Document it in `docs/usage.md`.
+
+### Work on distribute or analyze
+
+Both keep their logic pure so it can be tested without real disks: `distribute::allocate` takes
+partition sizes as plain data, and `disk::StaticDisks` fakes the operating system's free-space
+answers. Never assert on live free-space numbers in a test; they change between two calls. Assert
+on totals, volume ids and behaviour instead.
 
 ### Change the journal format
 
