@@ -5,7 +5,7 @@
 Requires a recent stable Rust toolchain (edition 2024, Rust 1.85+).
 
 ```sh
-git clone <repo-url> tidy-up && cd tidy-up
+git clone https://github.com/ianktoo/tidy-up.git tidy-up && cd tidy-up
 cargo install --path .
 tidy-up --version
 ```

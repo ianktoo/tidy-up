@@ -106,4 +106,6 @@ Want to embed it? Everything is `pub` and documented (`cargo doc --open`).
 
 ## License
 
-Source code is [MIT](LICENSE). Official binaries are additionally covered by the [EULA](EULA.md).
+Source code is [MIT](LICENSE). Official binaries are additionally covered by the [EULA](EULA.md) — free forever.
+
+Built by [Ian Too](https://iantoo.space) · [hello@iantoo.space](mailto:hello@iantoo.space) · security reports: see [SECURITY.md](SECURITY.md)
