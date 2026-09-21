@@ -44,7 +44,7 @@ Replace the version and target in the file names with the ones you downloaded.
 ```powershell
 $dir = "$env:LOCALAPPDATA\Programs\tidy-up"
 New-Item -ItemType Directory -Force $dir | Out-Null
-Expand-Archive .\tidy-up-0.1.0-x86_64-pc-windows-msvc.zip -DestinationPath "$env:TEMP\tidy-up-x" -Force
+Expand-Archive .\tidy-up-0.1.1-x86_64-pc-windows-msvc.zip -DestinationPath "$env:TEMP\tidy-up-x" -Force
 Copy-Item "$env:TEMP\tidy-up-x\tidy-up-*\tidy-up.exe" $dir -Force
 
 # add the folder to your user PATH once
@@ -64,8 +64,8 @@ Avoid the `setx PATH` command: it silently truncates long PATH values.
 
 ```sh
 mkdir -p ~/.local/bin
-tar xzf tidy-up-0.1.0-x86_64-unknown-linux-gnu.tar.gz        # use the file you downloaded
-install -m 755 tidy-up-0.1.0-*/tidy-up ~/.local/bin/tidy-up
+tar xzf tidy-up-0.1.1-x86_64-unknown-linux-gnu.tar.gz        # use the file you downloaded
+install -m 755 tidy-up-0.1.1-*/tidy-up ~/.local/bin/tidy-up
 ```
 
 If `~/.local/bin` is not already on your PATH (check with `echo "$PATH"`), add it for your shell:
@@ -84,13 +84,13 @@ Then open a new terminal, or run `source ~/.zshrc` (or your shell's file).
 To make it available to **every user** instead, install into a system folder that is already on the PATH:
 
 ```sh
-sudo install -m 755 tidy-up-0.1.0-*/tidy-up /usr/local/bin/tidy-up
+sudo install -m 755 tidy-up-0.1.1-*/tidy-up /usr/local/bin/tidy-up
 ```
 
 ### Check it worked
 
 ```sh
-tidy-up --version          # prints: tidy-up 0.1.0
+tidy-up --version          # prints: tidy-up 0.1.1
 command -v tidy-up         # macOS and Linux: where it was found
 Get-Command tidy-up        # Windows PowerShell
 ```
