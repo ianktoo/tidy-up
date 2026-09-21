@@ -86,7 +86,7 @@ jobs:
 
       - name: Checksums
         working-directory: dist
-        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+        run: sha256sum -- *.zip *.tar.gz > SHA256SUMS.txt && cat SHA256SUMS.txt
 
       - name: Create the release if needed, then upload binaries
         env:
