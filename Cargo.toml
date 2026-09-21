@@ -1,0 +1,37 @@
+[package]
+name = "tidy-up"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Interactive CLI that organizes messy folders by file type, isolates duplicates, and can undo everything."
+license = "MIT"
+readme = "README.md"
+keywords = ["cli", "organize", "files", "duplicates", "cleanup"]
+categories = ["command-line-utilities", "filesystem"]
+
+[lib]
+name = "tidy_up"
+path = "src/lib.rs"
+
+[[bin]]
+name = "tidy-up"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+blake3 = "1"
+clap = { version = "4", features = ["derive"] }
+console = "0.15"
+dialoguer = "0.11"
+indicatif = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
