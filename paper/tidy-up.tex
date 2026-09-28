@@ -1286,8 +1286,24 @@ other and needs a job that checks it.
 Third, \textbf{two integration tests encoded assumptions about the developer's
 machine}: one required the home directory to contain loose files, which a fresh CI
 runner's does not, and one compared a directory listing that a parallel test was
-concurrently modifying. The second passed locally only because the directory in
-question already existed.
+concurrently modifying.
+
+The second of those turned out to be a design defect rather than a flaky test. The
+two listings differed by a file named \code{.tidy-up-write-test-\ldots}: the guard
+gathered every fact before classifying, so the writability probe of \Cref{sec:perm}
+created a file \emph{inside the very directory it was about to refuse}. Harmless in
+effect, since the file is removed immediately, but wrong in principle, because the
+guard wrote to a directory it then told the user it would not touch, and it raced
+with anything else reading that directory. The probe now runs only after the path
+rules have failed to produce a refusal: for a directory refused by name the extra
+reason would not change the outcome, and there is no sense writing into somewhere
+already declined. For an ordinary directory it still runs, which is the case where
+being told up front is worth a file created and removed. A unit test and an
+integration test pin the new ordering.
+
+This is the most instructive of the three. It was invisible to every local run, it
+was found by an assertion written to check something else, and the honest fix was to
+change the system rather than to relax the test.
 
 \subsection{Defects found by the work itself}
 
