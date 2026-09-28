@@ -259,10 +259,10 @@ pub fn build_reorganize_plan(
         }
         let dest = unique_path(&dest, &reserved);
         reserved.insert(dest.clone());
-        if let Some(parent) = file.path.parent()
-            && parent != root
-        {
-            vacated.insert(parent.to_path_buf());
+        if let Some(parent) = file.path.parent() {
+            if parent != root {
+                vacated.insert(parent.to_path_buf());
+            }
         }
         moves.push(PlannedMove {
             from: file.path.clone(),
@@ -292,10 +292,10 @@ pub fn build_reorganize_plan(
                     &reserved,
                 );
                 reserved.insert(dest.clone());
-                if let Some(parent) = project.parent()
-                    && parent != root
-                {
-                    vacated.insert(parent.to_path_buf());
+                if let Some(parent) = project.parent() {
+                    if parent != root {
+                        vacated.insert(parent.to_path_buf());
+                    }
                 }
                 moves.push(PlannedMove {
                     from: project.clone(),

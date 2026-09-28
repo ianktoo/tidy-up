@@ -125,7 +125,10 @@ impl Cause {
             io::ErrorKind::StorageFull => Cause::NoSpace,
             io::ErrorKind::ReadOnlyFilesystem => Cause::Denied,
             io::ErrorKind::ResourceBusy => Cause::InUse,
-            io::ErrorKind::InvalidFilename | io::ErrorKind::InvalidInput => Cause::Invalid,
+            // `ErrorKind::InvalidFilename` would belong here too, but it is
+            // still unstable on the minimum supported Rust version. A rejected
+            // name usually surfaces as `InvalidInput` anyway.
+            io::ErrorKind::InvalidInput => Cause::Invalid,
             _ => match error.raw_os_error() {
                 Some(WINDOWS_SHARING_VIOLATION) | Some(WINDOWS_LOCK_VIOLATION) if cfg!(windows) => {
                     Cause::InUse

@@ -24,11 +24,12 @@ const SCRATCH: &str = "tidy-up-tests";
 /// otherwise the system temporary directory, which is correct on Linux and fine
 /// in a container.
 pub fn sandbox() -> tempfile::TempDir {
-    if let Some(base) = sandbox_base()
-        && fs::create_dir_all(&base).is_ok()
-        && let Ok(dir) = tempfile::Builder::new().prefix("tidy-").tempdir_in(&base)
-    {
-        return dir;
+    if let Some(base) = sandbox_base() {
+        if fs::create_dir_all(&base).is_ok() {
+            if let Ok(dir) = tempfile::Builder::new().prefix("tidy-").tempdir_in(&base) {
+                return dir;
+            }
+        }
     }
     tempfile::tempdir().expect("a temporary directory")
 }

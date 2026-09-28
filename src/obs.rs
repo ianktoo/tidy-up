@@ -288,19 +288,19 @@ pub fn enabled() -> bool {
 /// For a command spanning several folders this is the same one the journal goes
 /// in: the primary for `compare`, the first destination for `distribute`.
 pub fn attach(root: &Path) {
-    if let Some(mut sink) = sink()
-        && sink.root.is_none()
-    {
-        sink.root = Some(root.to_path_buf());
+    if let Some(mut sink) = sink() {
+        if sink.root.is_none() {
+            sink.root = Some(root.to_path_buf());
+        }
     }
 }
 
 /// Records one event. A no-op when logging is off.
 pub fn event(event: Event) {
-    if let Some(mut sink) = sink()
-        && sink.enabled
-    {
-        sink.events.push(event);
+    if let Some(mut sink) = sink() {
+        if sink.enabled {
+            sink.events.push(event);
+        }
     }
 }
 

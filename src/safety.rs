@@ -150,6 +150,22 @@ pub(crate) fn parts(path: &Path, platform: Platform) -> Parts {
     };
 
     let mut comps: Vec<String> = Vec::new();
+    // `/private/var`, `/private/etc` and `/private/tmp` are where `/var`, `/etc`
+    // and `/tmp` actually live on macOS, and both spellings reach the same
+    // directory. Folding them together means a rule or a carve-out written for
+    // one form matches the other, however the caller happened to spell it.
+    let rest = if platform == Platform::MacOs {
+        rest.strip_prefix("private/")
+            .or_else(|| rest.strip_prefix("private\\"))
+            .filter(|tail| {
+                ["var", "etc", "tmp"]
+                    .iter()
+                    .any(|dir| tail == dir || tail.starts_with(&format!("{dir}/")))
+            })
+            .map_or(rest.clone(), str::to_string)
+    } else {
+        rest
+    };
     for raw in rest.split(['/', '\\']) {
         match raw {
             "" | "." => {}
@@ -218,12 +234,17 @@ pub struct Environment {
     pub platform: Platform,
     /// `%USERPROFILE%` or `$HOME`, canonicalized when possible.
     pub home: Option<PathBuf>,
-    /// The system temporary directory, canonicalized.
+    /// Every spelling of the system temporary directory.
     ///
     /// It lives inside a protected path on two platforms (`%LOCALAPPDATA%\Temp` on
     /// Windows, `/private/var/folders/...` on macOS), so paths strictly under it are
     /// carved out of the rules that would otherwise catch them.
-    pub temp: Option<PathBuf>,
+    ///
+    /// A list, not one path, because the same directory has more than one name:
+    /// macOS reaches it through the `/var` symlink as well as `/private/var`, and
+    /// Windows may report it with an 8.3 short name. A caller who has not
+    /// canonicalized the path being judged must still get the carve-out.
+    pub temp: Vec<PathBuf>,
     /// Windows only: the variables that name system folders. Empty elsewhere.
     pub vars: BTreeMap<String, PathBuf>,
 }
@@ -252,7 +273,11 @@ impl Environment {
             .filter(|v| !v.is_empty())
             .map(PathBuf::from)
             .map(canonical_or_given);
-        let temp = Some(canonical_or_given(std::env::temp_dir()));
+        let raw_temp = std::env::temp_dir();
+        let mut temp = vec![canonical_or_given(raw_temp.clone())];
+        if !temp.contains(&raw_temp) {
+            temp.push(raw_temp);
+        }
         let mut vars = BTreeMap::new();
         if platform == Platform::Windows {
             for name in WINDOWS_VARS {
@@ -283,9 +308,9 @@ impl Environment {
         self
     }
 
-    /// Sets the temporary directory.
+    /// Adds a spelling of the temporary directory.
     pub fn with_temp(mut self, temp: impl Into<PathBuf>) -> Self {
-        self.temp = Some(temp.into());
+        self.temp.push(temp.into());
         self
     }
 
@@ -772,11 +797,10 @@ pub fn classify(path: &Path, env: &Environment, facts: &Facts) -> Assessment {
     // A path strictly inside the temporary directory is exempt from the path rules.
     // On Windows and macOS the temp directory lives inside a protected tree, and
     // refusing to tidy it would be both wrong and a self-inflicted wound.
-    let in_temp = env
-        .temp
-        .as_deref()
-        .map(|t| parts(t, env.platform))
-        .is_some_and(|t| p.under(&t) && !p.same_as(&t));
+    let in_temp = env.temp.iter().any(|t| {
+        let t = parts(t, env.platform);
+        p.under(&t) && !p.same_as(&t)
+    });
 
     if p.is_root() {
         reasons.push(if p.is_unc() {
@@ -797,12 +821,12 @@ pub fn classify(path: &Path, env: &Environment, facts: &Facts) -> Assessment {
         reasons.extend(path_rules(&p, env));
     }
 
-    if let Some(fs_type) = facts.fs_type.as_deref()
-        && PSEUDO_FILESYSTEMS.contains(&fs_type)
-    {
-        reasons.push(Reason::PseudoFilesystem {
-            fs_type: fs_type.to_string(),
-        });
+    if let Some(fs_type) = facts.fs_type.as_deref() {
+        if PSEUDO_FILESYSTEMS.contains(&fs_type) {
+            reasons.push(Reason::PseudoFilesystem {
+                fs_type: fs_type.to_string(),
+            });
+        }
     }
     if facts.system_attribute == Some(true) {
         reasons.push(Reason::SystemAttribute);
@@ -849,9 +873,10 @@ fn windows_rules(p: &Parts, env: &Environment) -> Vec<Reason> {
         "ProgramW6432",
         "ProgramData",
     ] {
-        if let Some(value) = env.var(name)
-            && p.under(&parts(value, Platform::Windows))
-        {
+        let matched = env
+            .var(name)
+            .is_some_and(|value| p.under(&parts(value, Platform::Windows)));
+        if matched {
             reasons.push(Reason::SystemFolder {
                 label: match name {
                     "ProgramFiles" | "ProgramFiles(x86)" | "ProgramW6432" => "installed programs",
@@ -911,15 +936,15 @@ fn unix_rules(
 
     // `~/Library` on macOS is the equivalent of AppData and just as fragile, so it
     // is judged before the carve-out that makes the rest of a home folder ordinary.
-    if env.platform == Platform::MacOs
-        && let Some(home) = env.home.as_deref()
-    {
-        let home = parts(home, env.platform);
-        let mut library = home.clone();
-        library.comps.push("library".to_string());
-        if p.under(&library) {
-            reasons.push(Reason::ApplicationData);
-            return reasons;
+    if env.platform == Platform::MacOs {
+        if let Some(home) = env.home.as_deref() {
+            let home = parts(home, env.platform);
+            let mut library = home.clone();
+            library.comps.push("library".to_string());
+            if p.under(&library) {
+                reasons.push(Reason::ApplicationData);
+                return reasons;
+            }
         }
     }
 
@@ -1086,10 +1111,10 @@ fn platform_facts(path: &Path, facts: &mut Facts) {
             .and_then(|parent| std::fs::metadata(parent).ok())
             .map(|parent| parent.dev() != meta.dev());
     }
-    if cfg!(target_os = "linux")
-        && let Ok(text) = std::fs::read_to_string("/proc/self/mountinfo")
-    {
-        facts.fs_type = fs_type_from_mountinfo(&text, path);
+    if cfg!(target_os = "linux") {
+        if let Ok(text) = std::fs::read_to_string("/proc/self/mountinfo") {
+            facts.fs_type = fs_type_from_mountinfo(&text, path);
+        }
     }
 }
 
@@ -1141,13 +1166,12 @@ fn unescape_octal(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i] == b'\\'
-            && i + 3 < bytes.len()
-            && let Ok(code) = u8::from_str_radix(&text[i + 1..i + 4], 8)
-        {
-            out.push(code as char);
-            i += 4;
-            continue;
+        if bytes[i] == b'\\' && i + 3 < bytes.len() {
+            if let Ok(code) = u8::from_str_radix(&text[i + 1..i + 4], 8) {
+                out.push(code as char);
+                i += 4;
+                continue;
+            }
         }
         out.push(bytes[i] as char);
         i += 1;

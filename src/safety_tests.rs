@@ -1225,3 +1225,60 @@ fn a_folder_that_trips_several_rules_is_explained_once() {
     );
     assert_eq!(lines.len(), 1, "one folder, one explanation: {lines:#?}");
 }
+
+/// On macOS `/var`, `/etc` and `/tmp` are symlinks into `/private`, so the same
+/// directory has two names. A rule or a carve-out written for one spelling has
+/// to match the other, or a verdict depends on how the caller typed the path.
+#[test]
+fn macos_private_aliases_fold_onto_their_short_names() {
+    let m = Platform::MacOs;
+    assert_eq!(parts(Path::new("/private/var/db"), m).comps, ["var", "db"]);
+    assert_eq!(parts(Path::new("/private/etc"), m).comps, ["etc"]);
+    assert_eq!(parts(Path::new("/private/tmp/x"), m).comps, ["tmp", "x"]);
+    // Only those three are aliases; anything else under /private stays put.
+    assert_eq!(
+        parts(Path::new("/private/other"), m).comps,
+        ["private", "other"]
+    );
+    assert_eq!(
+        parts(Path::new("/private/var/db"), m),
+        parts(Path::new("/var/db"), m),
+        "both spellings must reach the same verdict"
+    );
+}
+
+/// The failure this fixes: `tempfile` hands back `/var/folders/...` while
+/// `std::env::temp_dir()` canonicalizes to `/private/var/folders/...`, so the
+/// carve-out missed and every temporary directory on macOS was refused.
+#[test]
+fn a_macos_temp_directory_is_safe_under_either_spelling() {
+    let canonical = "/private/var/folders/36/abc/T";
+    let env = Environment::fake(Platform::MacOs)
+        .with_home(MAC_HOME)
+        .with_temp(canonical);
+    for path in [
+        "/private/var/folders/36/abc/T/.tmpVI2dTP",
+        "/var/folders/36/abc/T/.tmpVI2dTP",
+    ] {
+        let got = classify(Path::new(path), &env, &Facts::default());
+        assert!(got.is_safe(), "{path} was flagged {:?}", got.reasons);
+    }
+}
+
+/// Windows can report the temporary directory with an 8.3 short name while the
+/// canonical form is long. Recording both spellings is what keeps the carve-out
+/// working for a caller who has not canonicalized the path.
+#[test]
+fn several_spellings_of_the_temp_directory_are_all_carved_out() {
+    let env = Environment::fake(Platform::Windows)
+        .with_home(WIN_HOME)
+        .with_temp(r"C:\Users\runneradmin\AppData\Local\Temp")
+        .with_temp(r"C:\Users\RUNNER~1\AppData\Local\Temp");
+    for path in [
+        r"C:\Users\runneradmin\AppData\Local\Temp\tidy-abc",
+        r"C:\Users\RUNNER~1\AppData\Local\Temp\tidy-abc",
+    ] {
+        let got = classify(Path::new(path), &env, &Facts::default());
+        assert!(got.is_safe(), "{path} was flagged {:?}", got.reasons);
+    }
+}
