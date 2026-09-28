@@ -1209,8 +1209,24 @@ pub fn assess(path: &Path) -> Assessment {
 
 /// Judges a real folder a command is about to write to, including whether it
 /// actually can.
+///
+/// The writability probe creates and removes a file, so it runs only once the
+/// path rules have failed to produce a refusal. There is no sense writing into
+/// a folder tidy-up has already decided not to touch, and for a folder refused
+/// by name the extra reason would change nothing: it is refused either way.
+///
+/// The ordering also keeps the guard out of directories other processes are
+/// watching. A probe file appearing for a few microseconds in a home directory
+/// is harmless but surprising, and it is avoidable.
 pub fn assess_for_writing(path: &Path) -> Assessment {
-    assess_with(path, &SystemProbe::writing())
+    let env = Environment::from_env();
+    let mut facts = SystemProbe::read_only().facts(path);
+    let verdict = classify(path, &env, &facts);
+    if verdict.risk == Risk::Dangerous {
+        return verdict;
+    }
+    facts.writable = probe_writable(path);
+    classify(path, &env, &facts)
 }
 
 /// Judges `path` using `probe` and the real environment.

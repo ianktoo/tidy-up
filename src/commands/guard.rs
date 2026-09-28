@@ -24,7 +24,9 @@ use crate::{
     cli::{FilterArgs, SafetyArgs},
     fsops::resolve_root,
     obs,
-    safety::{Assessment, Reason, Risk, SystemProbe, assess_with, escalate_for_hidden},
+    safety::{
+        Assessment, Reason, Risk, SystemProbe, assess_for_writing, assess_with, escalate_for_hidden,
+    },
     ui,
 };
 
@@ -98,16 +100,16 @@ impl Guard {
     /// `distribute`, which canonicalize several paths of their own first.
     pub(crate) fn check(&self, original: &Path, root: &Path) -> Result<()> {
         // A dry run and a reporting command must leave the disk alone, so neither
-        // gets the write probe. The cost is that a dry run cannot tell you the
+        // finds out whether the folder is writable, since that costs a file
+        // created and removed. The cost is that a dry run cannot tell you the
         // folder is unwritable, which is the right trade: it was not going to
         // write anything anyway.
-        let probe = if self.access == Access::Write && !self.dry_run {
-            SystemProbe::writing()
+        let found = if self.access == Access::Write && !self.dry_run {
+            assess_for_writing(root)
         } else {
-            SystemProbe::read_only()
+            assess_with(root, &SystemProbe::read_only())
         };
-        let assessment = escalate_for_hidden(assess_with(root, &probe), self.include_hidden);
-        self.decide(original, &assessment)
+        self.decide(original, &escalate_for_hidden(found, self.include_hidden))
     }
 
     fn decide(&self, original: &Path, assessment: &Assessment) -> Result<()> {

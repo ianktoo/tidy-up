@@ -1282,3 +1282,39 @@ fn several_spellings_of_the_temp_directory_are_all_carved_out() {
         assert!(got.is_safe(), "{path} was flagged {:?}", got.reasons);
     }
 }
+
+/// The guard must not write into a folder it has already decided to refuse.
+/// The writability probe creates a file, so it runs only after the path rules
+/// have failed to produce a refusal.
+#[cfg(unix)]
+#[test]
+fn a_folder_refused_by_name_is_never_probed_for_writability() {
+    // /tmp is carved out, so build a fixture the path rules refuse on sight.
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+
+    // Judged as a home root, which is refused by name alone.
+    let env = Environment::fake(Platform::Linux).with_home(&home);
+    let facts = SystemProbe::read_only().facts(&home);
+    let verdict = classify(&home, &env, &facts);
+    assert_eq!(verdict.risk, Risk::Dangerous);
+    assert!(
+        std::fs::read_dir(&home).unwrap().next().is_none(),
+        "reaching a refusal must not have created anything"
+    );
+}
+
+/// The probe still runs when the path rules found nothing, because that is the
+/// case where being told up front is worth a file created and removed.
+#[test]
+fn an_ordinary_folder_is_still_checked_for_writability() {
+    let dir = tempfile::tempdir().unwrap();
+    let got = assess_for_writing(dir.path());
+    assert!(got.is_safe(), "{:?}", got.reasons);
+    assert_eq!(
+        std::fs::read_dir(dir.path()).unwrap().count(),
+        0,
+        "and the probe cleans up after itself"
+    );
+}

@@ -197,9 +197,9 @@ cannot be undone. Fourth, an \emph{idempotent re-grouping algorithm} that unpack
 arbitrarily nested directory tree and re-files it under an ordered list of grouping
 keys, computes which directories the operation will empty, and records their removal
 so that undo restores the original tree exactly, including directories that held
-nothing. The implementation adds 5{,}633 lines across nine modules and introduces
+nothing. The implementation adds 5{,}726 lines across nine modules and introduces
 \emph{zero} new dependencies, keeping the transitive dependency count at 54 crates.
-An evaluation over 350 automated tests reports the properties each mechanism is
+An evaluation over 353 automated tests reports the properties each mechanism is
 designed to guarantee, including a byte-for-byte reorganize/undo round trip and the
 non-overridability of a genuine permission wall.
 \\[0.6em]
@@ -1128,14 +1128,14 @@ counts.
 \begin{table}[t]
 \centering
 \small
-\caption{Test suite. 350 tests, zero failures, zero \code{clippy} warnings at
-\code{--all-targets}.}
+\caption{Test suite. 353 tests, zero failures, zero \code{clippy} warnings at
+\code{--all-targets}, on both stable Rust and the declared minimum of 1.85.}
 \label{tab:tests}
 \begin{tabularx}{\textwidth}{@{}l r X@{}}
 \toprule
 \textbf{Suite} & \textbf{Tests} & \textbf{Scope} \\
 \midrule
-unit (in-crate)        & 256 & classifier corpus, probes, planners, taxonomy, log format \\
+unit (in-crate)        & 259 & classifier corpus, probes, planners, taxonomy, log format \\
 \code{tests/cli}       & 30  & pre-existing command-line behaviour (regression) \\
 \code{tests/workflow}  & 23  & scan $\rightarrow$ plan $\rightarrow$ execute $\rightarrow$ journal $\rightarrow$ restore \\
 \code{tests/reorganize}& 11  & re-grouping, idempotence, undo round trip \\
@@ -1145,7 +1145,7 @@ unit (in-crate)        & 256 & classifier corpus, probes, planners, taxonomy, lo
 \code{tests/scripts}   & 3   & installer scripts \\
 doc-tests              & 5   & every documented example compiles and runs \\
 \midrule
-\textbf{Total}         & \textbf{350} & \\
+\textbf{Total}         & \textbf{353} & \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -1229,7 +1229,7 @@ Direct dependencies            & 10 & 10 \\
 Unique transitive crates       & 54 & 54 \\
 Stripped release binary        & 2.19\,MiB & 2.24\,MiB \\
 New dependencies added         & \multicolumn{2}{c}{0} \\
-Lines added (implementation + tests) & \multicolumn{2}{c}{5{,}633} \\
+Lines added (implementation + tests) & \multicolumn{2}{c}{5{,}726} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1255,6 +1255,39 @@ otherwise have gone differently:
 
 We report items 2 and 3 as genuine reductions in capability accepted in exchange for a
 stated property of the artifact, not as free wins.
+
+\subsection{What continuous integration caught}
+\label{sec:eval:ci}
+
+Three classes of defect survived a green local run on Windows and were caught only
+by the cross-platform matrix. They are reported because each is a direct consequence
+of a design decision described above.
+
+First, \textbf{the temporary-directory carve-out was broken on two of three
+platforms}, exactly the mechanism \Cref{sec:detect} identifies as load bearing. The
+environment recorded the canonicalized temporary directory, but a caller that has not
+canonicalized its own path supplies a different spelling of the same place:
+\code{tempfile} returns \code{/var/folders/...} on macOS where the canonical form is
+\code{/private/var/folders/...}, and an 8.3 short name on Windows. The two never
+compared equal, so every temporary directory was classified \textsf{Dangerous}. The
+fix records the temporary directory under every spelling and, on macOS, folds
+\code{/private/var}, \code{/private/etc} and \code{/private/tmp} onto their short
+names, since a verdict must not depend on how the caller typed the path. Three tests
+now pin this, written against the pure classifier so they run on any host. This is a
+pointed illustration of the limits of P3: making the \emph{rules} testable everywhere
+does not make the \emph{environment} so.
+
+Second, \textbf{the new code did not compile on the declared minimum supported Rust
+version}. Ten sites used \code{let} chains, stabilized in 1.88, and one used
+\code{ErrorKind::InvalidFilename}, still feature-gated at 1.85. Neither is visible to
+a developer on current stable. A declared MSRV is a compatibility claim like any
+other and needs a job that checks it.
+
+Third, \textbf{two integration tests encoded assumptions about the developer's
+machine}: one required the home directory to contain loose files, which a fresh CI
+runner's does not, and one compared a directory listing that a parallel test was
+concurrently modifying. The second passed locally only because the directory in
+question already existed.
 
 \subsection{Defects found by the work itself}
 
@@ -1345,7 +1378,7 @@ is that separating a pure verdict from an impure policy is what made the work te
 at all --- and that the same separation forced the discovery, in the Rust standard
 library, that \code{std::path} cannot be used to reason about another platform's paths.
 
-The implementation is 5{,}633 lines, adds no dependencies, and passes 350 tests.
+The implementation is 5{,}726 lines, adds no dependencies, and passes 353 tests.
 
 % =============================================================================
 \section*{Availability}

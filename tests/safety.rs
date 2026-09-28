@@ -238,3 +238,34 @@ fn the_reporting_commands_are_the_exception() {
         all_output(&out)
     );
 }
+
+/// Refusing a folder must leave it exactly as it was, down to transient files.
+///
+/// The guard used to check writability before consulting the path rules, so it
+/// briefly created a probe file inside the very folder it was about to refuse.
+/// Harmless, but it meant the guard wrote to a directory the user was told it
+/// would not touch, and it raced with anything else reading that directory.
+#[test]
+fn refusing_a_folder_leaves_no_trace_in_it() {
+    let Some(home) = home() else { return };
+    let out = tidy(&["organize", s(&home), "--yes"]);
+    assert!(!out.status.success(), "{}", all_output(&out));
+
+    let strays: Vec<String> = fs::read_dir(&home)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.starts_with(".tidy-up-write-test"))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        strays.is_empty(),
+        "the guard left probe files behind: {strays:?}"
+    );
+    assert!(
+        !home.join(".tidy-up").exists(),
+        "and no state folder in a directory it refused"
+    );
+}
