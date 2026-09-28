@@ -61,7 +61,9 @@ impl DiskProbe for SystemDisks {
     }
 }
 
-fn nearest_existing(path: &Path) -> &Path {
+/// The deepest folder on this path that exists, which for a destination that has
+/// not been created yet is where it would be created.
+pub(crate) fn nearest_existing(path: &Path) -> &Path {
     path.ancestors()
         .find(|p| !p.as_os_str().is_empty() && p.exists())
         .unwrap_or(Path::new("."))

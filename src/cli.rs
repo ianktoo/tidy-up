@@ -8,6 +8,7 @@ use crate::{
     compare::CompareAction,
     distribute::{Granularity, Layout, Prefer, StrategyKind},
     plan::ProjectPolicy,
+    regroup::GroupBy,
     restore::ConflictPolicy,
     rules::IgnoreRules,
 };
@@ -26,12 +27,43 @@ use crate::{
                   .iso        ignore an extension\n  \
                   *.tmp       ignore by glob\n  \
                   notes.txt   ignore an exact name\n  \
-                  # comment"
+                  # comment\n\n\
+                  Dates are UTC. Set TIDY_UP_UTC_OFFSET=+03:00 to group by your own clock."
 )]
 pub struct Cli {
     /// What to do; omit for the interactive menu.
     #[command(subcommand)]
     pub command: Option<Command>,
+    /// Write a machine-readable record of this run to `.tidy-up/logs/`.
+    ///
+    /// Separate from `--verbose`, which changes what is printed rather than
+    /// what is recorded. `TIDY_UP_LOG=1` has the same effect.
+    #[arg(long, global = true)]
+    pub log: bool,
+    /// Exit with a failure code if anything had to be skipped.
+    ///
+    /// A run that skipped items still did the work it could, so it normally
+    /// succeeds. Scripts that need to know otherwise can ask.
+    #[arg(long, global = true)]
+    pub strict: bool,
+}
+
+impl Cli {
+    /// The sub-command name, for the run log.
+    pub fn command_name(&self) -> &'static str {
+        match &self.command {
+            None => "interactive",
+            Some(Command::Organize(_)) => "organize",
+            Some(Command::Reorganize(_)) => "reorganize",
+            Some(Command::Dedupe(_)) => "dedupe",
+            Some(Command::Compare(_)) => "compare",
+            Some(Command::Analyze(_)) => "analyze",
+            Some(Command::Distribute(_)) => "distribute",
+            Some(Command::Restore(_)) => "restore",
+            Some(Command::History(_)) => "history",
+            Some(Command::Purge(_)) => "purge",
+        }
+    }
 }
 
 /// Available sub-commands.
@@ -40,6 +72,10 @@ pub enum Command {
     /// Sort files into category folders (Images, Documents, 3D Models, ...).
     #[command(visible_alias = "o")]
     Organize(OrganizeArgs),
+    /// Unpack a folder that is organized badly and re-file everything by year,
+    /// type, size and more.
+    #[command(visible_alias = "ro")]
+    Reorganize(ReorganizeArgs),
     /// Find duplicate files and move the extra copies into `_Duplicates/` for review.
     #[command(visible_alias = "d")]
     Dedupe(DedupeArgs),
@@ -107,6 +143,18 @@ impl FilterArgs {
     }
 }
 
+/// The override for the system-folder guard.
+///
+/// Long-only and deliberately unwieldy. `--force` would be too generic and far
+/// too easy to build muscle memory for.
+#[derive(Debug, Args, Clone, Default)]
+pub struct SafetyArgs {
+    /// Proceed even though the folder looks like one the operating system manages.
+    /// You will still be asked to confirm: `--yes` alone is not enough.
+    #[arg(long)]
+    pub allow_system_folder: bool,
+}
+
 /// Arguments for `organize`.
 #[derive(Debug, Args, Clone)]
 pub struct OrganizeArgs {
@@ -115,9 +163,51 @@ pub struct OrganizeArgs {
     pub path: PathBuf,
     #[command(flatten)]
     pub filter: FilterArgs,
+    #[command(flatten)]
+    pub safety: SafetyArgs,
     /// How many folder levels to look through (1 = only files directly inside).
     #[arg(short, long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..))]
     pub depth: u32,
+    /// What to do with detected code/git projects.
+    #[arg(long, value_enum, default_value_t = ProjectPolicy::Keep)]
+    pub projects: ProjectPolicy,
+    /// Show the plan without changing anything.
+    #[arg(short = 'n', long)]
+    pub dry_run: bool,
+    /// Do not ask for confirmation.
+    #[arg(short, long)]
+    pub yes: bool,
+    /// List every planned move and every skipped item.
+    #[arg(short, long)]
+    pub verbose: bool,
+}
+
+/// Arguments for `reorganize`.
+#[derive(Debug, Args, Clone)]
+pub struct ReorganizeArgs {
+    /// Folder to unpack and re-file.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// How to group, outermost first. `--by year,type` makes `2024/Images/`.
+    #[arg(
+        short = 'b',
+        long = "by",
+        value_enum,
+        value_delimiter = ',',
+        default_value = "type",
+        value_name = "KEY,KEY,..."
+    )]
+    pub by: Vec<GroupBy>,
+    #[command(flatten)]
+    pub filter: FilterArgs,
+    #[command(flatten)]
+    pub safety: SafetyArgs,
+    /// How many folder levels to unpack (default: all of them).
+    #[arg(short, long, value_parser = clap::value_parser!(u32).range(1..))]
+    pub depth: Option<u32>,
+    /// Leave folders that end up empty instead of deleting them.
+    #[arg(long)]
+    pub keep_empty_dirs: bool,
     /// What to do with detected code/git projects.
     #[arg(long, value_enum, default_value_t = ProjectPolicy::Keep)]
     pub projects: ProjectPolicy,
@@ -140,6 +230,8 @@ pub struct DedupeArgs {
     pub path: PathBuf,
     #[command(flatten)]
     pub filter: FilterArgs,
+    #[command(flatten)]
+    pub safety: SafetyArgs,
     /// How many folder levels to search (default: all).
     #[arg(short, long, value_parser = clap::value_parser!(u32).range(1..))]
     pub depth: Option<u32>,
@@ -163,6 +255,8 @@ pub struct CompareArgs {
     pub paths: Vec<PathBuf>,
     #[command(flatten)]
     pub filter: FilterArgs,
+    #[command(flatten)]
+    pub safety: SafetyArgs,
     /// How many folder levels to search inside each folder (default: all).
     #[arg(short, long, value_parser = clap::value_parser!(u32).range(1..))]
     pub depth: Option<u32>,
@@ -248,6 +342,8 @@ pub struct DistributeArgs {
     pub prefer: Prefer,
     #[command(flatten)]
     pub filter: FilterArgs,
+    #[command(flatten)]
+    pub safety: SafetyArgs,
     /// Show the plan without changing anything.
     #[arg(short = 'n', long)]
     pub dry_run: bool,
@@ -265,6 +361,8 @@ pub struct RestoreArgs {
     /// Folder that was organized.
     #[arg(default_value = ".")]
     pub path: PathBuf,
+    #[command(flatten)]
+    pub safety: SafetyArgs,
     /// Journal id (or unique prefix) to restore; default is the most recent active one.
     #[arg(long, conflicts_with = "all")]
     pub id: Option<String>,
@@ -296,6 +394,8 @@ pub struct PurgeArgs {
     /// Folder whose `_Duplicates/` should be deleted.
     #[arg(default_value = ".")]
     pub path: PathBuf,
+    #[command(flatten)]
+    pub safety: SafetyArgs,
     /// Do not ask for confirmation.
     #[arg(short, long)]
     pub yes: bool,

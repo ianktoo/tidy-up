@@ -4,10 +4,10 @@ use anyhow::Result;
 
 use crate::{
     cli::OrganizeArgs,
-    commands::print_execution,
+    commands::{guard::Guard, print_execution},
     executor::execute,
-    fsops::resolve_root,
     journal::Operation,
+    obs,
     plan::{build_organize_plan, organize_skip_dirs},
     scan::{ScanOptions, scan},
     ui,
@@ -15,17 +15,30 @@ use crate::{
 
 /// Scans, plans, confirms and performs an organize run.
 pub fn run(args: &OrganizeArgs) -> Result<()> {
-    let root = resolve_root(&args.path)?;
+    let root = Guard::write(&args.safety, args.yes, args.dry_run)
+        .with_filter(&args.filter)
+        .root(&args.path)?;
     let options = ScanOptions {
         max_depth: args.depth as usize,
         rules: args.filter.to_rules()?,
         skip_root_dirs: organize_skip_dirs(),
     };
 
+    obs::attach(&root);
+    let started = std::time::Instant::now();
     let spinner = ui::spinner("Scanning");
     let scanned = scan(&root, &options);
     spinner.finish_and_clear();
     let scanned = scanned?;
+    obs::metrics(|m| m.absorb_scan(&scanned));
+    obs::event(obs::Event::Scan {
+        root: root.display().to_string(),
+        files: scanned.files.len(),
+        bytes: scanned.files.iter().map(|f| f.size).sum(),
+        projects: scanned.projects.len(),
+        skipped: crate::commands::skip_counts(&scanned),
+        ms: started.elapsed().as_millis() as u64,
+    });
     ui::info(&format!(
         "Scanned {}: {} eligible",
         root.display(),
@@ -33,6 +46,7 @@ pub fn run(args: &OrganizeArgs) -> Result<()> {
     ));
 
     let plan = build_organize_plan(&root, &scanned, args.projects);
+    obs::plan_built("organize", &plan);
     if plan.is_empty() {
         ui::print_skipped(&root, &plan.skipped, args.verbose);
         ui::success("Nothing to organize: this folder is already tidy.");

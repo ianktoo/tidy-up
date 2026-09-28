@@ -249,7 +249,10 @@ cargo install --path .
 
 | Topic | Windows | macOS | Linux |
 |---|---|---|---|
-| Hidden files | Names starting with `.`, plus the HIDDEN and SYSTEM attributes | Names starting with `.` | Names starting with `.` |
+| Hidden files | Names starting with `.`, plus the HIDDEN attribute | Names starting with `.`, plus the `UF_HIDDEN` flag | Names starting with `.` |
+| System-owned files | Skipped separately (the SYSTEM attribute); `--include-hidden` does not un-skip these | n/a | n/a |
+| Folders refused | `C:\Windows`, `Program Files`, `ProgramData`, `C:\Users`, `AppData`, `$Recycle.Bin`, `System Volume Information`, drive roots, share roots | `/`, `/System`, `/Library`, `/Applications`, `/usr` (not `/usr/local`), `/bin`, `/etc`, `/var`, `/private`, `/Volumes`, `/Users`, `~/Library` | `/`, `/bin`, `/usr` (not `/usr/local`), `/etc`, `/var`, `/boot`, `/proc`, `/sys`, `/dev`, `/run`, `/home`, `/root` |
+| Whether you can write | Checked by briefly creating and deleting a file, because ACLs disagree with permission bits | Same, which also catches SIP | Same, which also catches read-only mounts |
 | Shortcuts skipped | `lnk`, `url` | `webloc` | `desktop` |
 | OS files skipped | `desktop.ini`, `Thumbs.db` | `.DS_Store` | (none) |
 | Case sensitivity | Insensitive: `A.TXT` and `a.txt` clash | Insensitive by default | Sensitive |
@@ -259,6 +262,44 @@ cargo install --path .
 
 Name clashes are handled by content and by unique names on every platform, so behaviour is the same
 whether the file system is case sensitive or not.
+
+### System folders
+
+Before anything is moved, tidy-up works out whether the folder you pointed it at is one the
+operating system manages, and refuses if it is. Your own home folder counts: tidying it would
+move your settings and every top-level folder you have.
+
+```sh
+tidy-up organize "C:\Windows" --yes
+# Careful
+# ! C:\Windows is a folder the system manages.
+#   It holds the Windows installation, which other programs expect to find in place.
+# error: refusing to change C:\Windows: it looks like a folder the system manages.
+#        If you are certain, re-run with --allow-system-folder
+```
+
+Three things are worth knowing about how this behaves:
+
+- **`--yes` is not an override.** It answers a confirmation; it does not unlock a system folder.
+  An existing script that passes `--yes` keeps working on ordinary folders and starts failing
+  loudly on system ones, which is the point.
+- **`--allow-system-folder` gets you to the question, not past it.** You are still asked to
+  confirm, and the answer defaults to no. Without a terminal, the run stops.
+- **Reporting never blocks.** `analyze` and `history` print the warning and carry on, because
+  looking at a whole drive is one of the reasons they exist.
+
+A folder tidy-up genuinely cannot write to is refused even with the flag, because no flag grants
+permission the operating system refused. `--dry-run` is always allowed: it changes nothing, and
+seeing the plan is the best argument against running it for real.
+
+Folders that are merely worth a second thought, such as `/usr/local`, `/opt`, `/srv` or the root
+of a mounted volume, produce a warning and a confirmation rather than a refusal. Passing
+`--include-hidden` turns one of those warnings into a refusal, because dotfiles are where
+configuration lives and including them widens what a run would touch.
+
+Ordinary folders say nothing at all. `D:\Downloads`, `~/Pictures`, `/mnt/storage`,
+`/media/you/USB` and a folder inside your temporary directory are all left alone by the guard,
+and there is a test whose only job is to keep it that way.
 
 ### Details worth knowing
 
@@ -272,6 +313,11 @@ whether the file system is case sensitive or not.
   network share reports the share's free space.
 - **Windows partition detection** uses the drive letter, so a folder mounted from another volume into a
   drive is treated as that drive. If it matters, point `distribute` at the mounted folder's real drive.
+- **One bad file never stops a run.** A folder you cannot read, a file another program is
+  holding open, a name the file system will not accept: each is skipped, counted and reported at
+  the end, and everything else still gets done. The only failure that stops a run is one that
+  would leave changes it could not record, because a change tidy-up cannot journal is a change
+  you cannot undo.
 - **File names that are not valid UTF-8** (possible on Linux) are skipped, because they cannot be
   recorded faithfully in the undo journal.
 - **Terminals:** colours and progress bars are used when attached to a terminal and disabled when output

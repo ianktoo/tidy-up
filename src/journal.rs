@@ -39,6 +39,8 @@ pub enum Operation {
     Compare,
     /// Spreading files across several destinations.
     Distribute,
+    /// Unpacking an existing tree and re-filing it under new grouping keys.
+    Reorganize,
 }
 
 impl std::fmt::Display for Operation {
@@ -48,6 +50,7 @@ impl std::fmt::Display for Operation {
             Operation::Dedupe => "dedupe",
             Operation::Compare => "compare",
             Operation::Distribute => "distribute",
+            Operation::Reorganize => "reorganize",
         })
     }
 }
@@ -75,6 +78,15 @@ pub enum Record {
     Header(Header),
     /// A directory this run created.
     DirCreated {
+        /// Path relative to the root.
+        path: PathBuf,
+    },
+    /// A directory this run deleted after emptying it.
+    ///
+    /// Only `reorganize` produces these. Undo recreates the folder, which is the
+    /// difference between putting a tree back and putting back only the files
+    /// that happened to be in it.
+    DirRemoved {
         /// Path relative to the root.
         path: PathBuf,
     },
@@ -155,6 +167,12 @@ impl JournalWriter {
     pub fn record_dir_created(&mut self, path: &Path) -> Result<()> {
         let path = self.relative(path)?;
         self.append(&Record::DirCreated { path })
+    }
+
+    /// Records that the empty directory `path` was deleted.
+    pub fn record_dir_removed(&mut self, path: &Path) -> Result<()> {
+        let path = self.relative(path)?;
+        self.append(&Record::DirRemoved { path })
     }
 
     /// Records that `from` moved to `to` (both absolute, under the root).

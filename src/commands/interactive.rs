@@ -8,14 +8,15 @@ use dialoguer::{Confirm, Input, Select};
 use crate::{
     cli::{
         AnalyzeArgs, CompareArgs, DedupeArgs, DistributeArgs, FilterArgs, HistoryArgs,
-        OrganizeArgs, PurgeArgs,
+        OrganizeArgs, PurgeArgs, ReorganizeArgs, SafetyArgs,
     },
-    commands::{analyze, compare, dedupe, distribute, organize, restore},
+    commands::{analyze, compare, dedupe, distribute, organize, reorganize, restore},
     disk::{parse_percent, parse_size},
     distribute::{Granularity, Layout, Prefer, StrategyKind},
     fsops::resolve_root,
     journal::Journal,
     plan::ProjectPolicy,
+    regroup::GroupBy,
     restore::ConflictPolicy,
     ui,
 };
@@ -23,8 +24,9 @@ use crate::{
 /// Folder depth used when the user opts to include sub-folders.
 const SUBFOLDER_DEPTH: u32 = 4;
 
-const MENU: [&str; 10] = [
+const MENU: [&str; 11] = [
     "Organize by file type",
+    "Re-file a badly organized folder (reorganize)",
     "Find duplicates and isolate them for review",
     "Compare folders (find overlap, merge or clean up)",
     "Analyze space usage",
@@ -52,22 +54,24 @@ pub fn run() -> Result<()> {
             .interact()?;
         let outcome = match pick {
             0 => organize_flow(&root),
-            1 => dedupe_flow(&root),
-            2 => compare_flow(&root),
-            3 => analyze::run(&AnalyzeArgs {
+            1 => reorganize_flow(&root),
+            2 => dedupe_flow(&root),
+            3 => compare_flow(&root),
+            4 => analyze::run(&AnalyzeArgs {
                 paths: vec![root.clone()],
                 top: 10,
                 json: false,
                 duplicates: false,
             }),
-            4 => distribute_flow(&root),
-            5 => restore_flow(&root),
-            6 => restore::history(&HistoryArgs { path: root.clone() }),
-            7 => dedupe::purge(&PurgeArgs {
+            5 => distribute_flow(&root),
+            6 => restore_flow(&root),
+            7 => restore::history(&HistoryArgs { path: root.clone() }),
+            8 => dedupe::purge(&PurgeArgs {
                 path: root.to_path_buf(),
+                safety: SafetyArgs::default(),
                 yes: false,
             }),
-            8 => choose_folder().map(|new_root| root = new_root),
+            9 => choose_folder().map(|new_root| root = new_root),
             _ => return Ok(()),
         };
         if let Err(err) = outcome {
@@ -130,6 +134,7 @@ fn organize_flow(root: &Path) -> Result<()> {
 
     organize::run(&OrganizeArgs {
         path: root.to_path_buf(),
+        safety: SafetyArgs::default(),
         filter: FilterArgs {
             ignore_ext: ignore_ext.split(',').map(str::to_owned).collect(),
             include_shortcuts,
@@ -147,9 +152,51 @@ fn organize_flow(root: &Path) -> Result<()> {
     })
 }
 
+/// Asks how to group, then re-files the whole folder.
+///
+/// The menu never sets `--allow-system-folder`. If someone points it at a system
+/// folder, the right answer is the refusal that names the flag.
+fn reorganize_flow(root: &Path) -> Result<()> {
+    const CHOICES: [(&str, &[GroupBy]); 6] = [
+        ("By file type", &[GroupBy::Type]),
+        ("By year", &[GroupBy::Year]),
+        ("By year, then file type", &[GroupBy::Year, GroupBy::Type]),
+        ("By year, then month", &[GroupBy::Year, GroupBy::Month]),
+        (
+            "By file type, then extension",
+            &[GroupBy::Type, GroupBy::Ext],
+        ),
+        ("By first letter of the name", &[GroupBy::Alpha]),
+    ];
+    let labels: Vec<&str> = CHOICES.iter().map(|(label, _)| *label).collect();
+    let pick = Select::new()
+        .with_prompt("How should the files be grouped?")
+        .items(&labels)
+        .default(0)
+        .interact()?;
+    let preview = Confirm::new()
+        .with_prompt("Show the plan first, without changing anything?")
+        .default(true)
+        .interact()?;
+
+    reorganize::run(&ReorganizeArgs {
+        path: root.to_path_buf(),
+        by: CHOICES[pick].1.to_vec(),
+        filter: FilterArgs::default(),
+        safety: SafetyArgs::default(),
+        depth: None,
+        keep_empty_dirs: false,
+        projects: ProjectPolicy::Keep,
+        dry_run: preview,
+        yes: false,
+        verbose: false,
+    })
+}
+
 fn dedupe_flow(root: &Path) -> Result<()> {
     dedupe::run(&DedupeArgs {
         path: root.to_path_buf(),
+        safety: SafetyArgs::default(),
         filter: FilterArgs::default(),
         depth: None,
         dry_run: false,
@@ -229,6 +276,7 @@ fn distribute_flow(root: &Path) -> Result<()> {
         .interact()?;
 
     distribute::run(&DistributeArgs {
+        safety: SafetyArgs::default(),
         from: vec![root.to_path_buf()],
         to,
         ratio,
@@ -273,6 +321,7 @@ fn compare_flow(root: &Path) -> Result<()> {
     }
     compare::run(&CompareArgs {
         paths,
+        safety: SafetyArgs::default(),
         filter: FilterArgs::default(),
         depth: None,
         action: None,

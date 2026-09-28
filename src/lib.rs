@@ -9,9 +9,12 @@
 //! |-------|--------|----------------|
 //! | classify | [`category`], [`rules`], [`projects`] | what a file is, and what to leave alone |
 //! | discover | [`scan`] | walk a folder into eligible files + skipped entries |
-//! | decide | [`plan`], [`dedupe`], [`compare`] | pure, reviewable lists of moves |
+//! | decide | [`plan`], [`dedupe`], [`compare`], [`regroup`] | pure, reviewable lists of moves |
 //! | act | [`executor`], [`fsops`] | perform moves safely, never overwriting |
 //! | remember | [`journal`] | append-only JSON Lines undo log |
+//! | guard | [`safety`] | refuse to reorganize folders the system manages |
+//! | survive | [`outcome`] | collect failures, skip the item, keep going |
+//! | observe | [`obs`] | a JSON Lines record of what a run decided |
 //! | undo | [`restore`] | reverse a journal |
 //! | present | [`cli`], [`commands`], [`ui`] | arguments, flows, terminal output |
 //!
@@ -42,11 +45,15 @@ pub mod error;
 pub mod executor;
 pub mod fsops;
 pub mod journal;
+pub mod obs;
+pub mod outcome;
 pub mod parallel;
 pub mod plan;
 pub mod projects;
+pub mod regroup;
 pub mod restore;
 pub mod rules;
+pub mod safety;
 pub mod scan;
 pub mod timefmt;
 pub mod ui;
@@ -54,6 +61,21 @@ pub mod ui;
 use clap::Parser;
 
 /// Parses the process arguments and runs the requested command.
+///
+/// The run log is opened here and closed here, so the closing event is written
+/// whatever the command did, including on the error path.
 pub fn run() -> anyhow::Result<()> {
-    commands::dispatch(cli::Cli::parse())
+    let cli = cli::Cli::parse();
+    obs::start(cli.command_name(), cli.log);
+    let result = commands::dispatch(cli);
+    let status = match &result {
+        Ok(()) => obs::Status::Ok,
+        Err(e) if e.to_string().starts_with("Cancelled") => obs::Status::Cancelled,
+        Err(e) if e.to_string().starts_with("refusing") => obs::Status::Blocked,
+        Err(_) => obs::Status::Error,
+    };
+    if let Some(path) = obs::finish(status) {
+        ui::hint(&format!("Run log: {}", path.display()));
+    }
+    result
 }

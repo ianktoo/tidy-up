@@ -2,6 +2,7 @@
 
 use std::{
     collections::HashSet,
+    fs,
     path::{Path, PathBuf},
 };
 
@@ -9,6 +10,7 @@ use crate::{
     error::Result,
     fsops::{create_dirs_tracked, move_path, unique_path},
     journal::{JournalWriter, Operation},
+    outcome::{Op, Problems},
     plan::Plan,
 };
 
@@ -36,8 +38,26 @@ pub struct ExecutionReport {
     pub moved: usize,
     /// Bytes relocated.
     pub bytes: u64,
-    /// Moves that failed, with the reason. Failures never abort the run.
-    pub failed: Vec<(PathBuf, String)>,
+    /// Everything that went wrong. A failure never aborts the run: the item is
+    /// skipped, recorded here, and reported at the end.
+    pub problems: Problems,
+    /// Folders that were emptied by the run and then deleted.
+    pub dirs_removed: usize,
+}
+
+/// Executes `plan`, then deletes `emptied` (deepest first) and journals each
+/// removal so undo can put the folders back.
+///
+/// A folder that turns out not to be empty, or that will not delete, is left
+/// alone: `remove_dir` refuses a non-empty directory, which is exactly the
+/// safety property wanted here. Nothing about a failed cleanup stops the run.
+pub fn execute_and_clean(
+    plan: &Plan,
+    operation: Operation,
+    emptied: &[PathBuf],
+    on_progress: impl FnMut(&Progress),
+) -> Result<ExecutionReport> {
+    execute_inner(plan, operation, on_progress, emptied)
 }
 
 /// Executes `plan`, calling `on_progress` before each move and once at the end.
@@ -48,9 +68,18 @@ pub struct ExecutionReport {
 pub fn execute(
     plan: &Plan,
     operation: Operation,
-    mut on_progress: impl FnMut(&Progress),
+    on_progress: impl FnMut(&Progress),
 ) -> Result<ExecutionReport> {
-    if plan.is_empty() {
+    execute_inner(plan, operation, on_progress, &[])
+}
+
+fn execute_inner(
+    plan: &Plan,
+    operation: Operation,
+    mut on_progress: impl FnMut(&Progress),
+    emptied: &[PathBuf],
+) -> Result<ExecutionReport> {
+    if plan.is_empty() && emptied.is_empty() {
         return Ok(ExecutionReport::default());
     }
     let mut journal = JournalWriter::create(&plan.root, operation)?;
@@ -80,7 +109,9 @@ pub fn execute(
         let created = match create_dirs_tracked(parent) {
             Ok(created) => created,
             Err(e) => {
-                report.failed.push((planned.from.clone(), e.to_string()));
+                // The destination folder could not be made, so this move cannot
+                // happen. Every other move still can.
+                report.problems.record(parent, Op::CreateDir, &e);
                 continue;
             }
         };
@@ -88,7 +119,7 @@ pub fn execute(
             journal.record_dir_created(dir)?;
         }
         if let Err(e) = move_path(&planned.from, &dest) {
-            report.failed.push((planned.from.clone(), e.to_string()));
+            report.problems.record(&planned.from, Op::Move, &e);
             continue;
         }
         if let Err(e) = journal.record_move(&planned.from, &dest, planned.kind) {
@@ -98,6 +129,16 @@ pub fn execute(
         report.moved += 1;
         report.bytes += planned.size;
     }
+    // Deepest first, so a child is gone before its parent is tried.
+    for dir in emptied {
+        if fs::remove_dir(dir).is_ok() {
+            // Journalled after the fact: a removal that did not happen must not
+            // be recorded, or undo would recreate a folder that never went away.
+            journal.record_dir_removed(dir)?;
+            report.dirs_removed += 1;
+        }
+    }
+
     on_progress(&Progress {
         done: total,
         total,
@@ -151,7 +192,7 @@ mod tests {
         .unwrap();
 
         assert_eq!((report.moved, report.bytes), (2, 6));
-        assert!(report.failed.is_empty());
+        assert!(report.problems.is_empty());
         assert!(dir.path().join("Images/a.png").exists());
         assert!(!dir.path().join("a.png").exists());
         assert_eq!(ticks.first(), Some(&(0, 2)));
@@ -182,8 +223,10 @@ mod tests {
         );
         let report = execute(&plan, Operation::Organize, |_| {}).unwrap();
         assert_eq!(report.moved, 1);
-        assert_eq!(report.failed.len(), 1);
-        assert!(report.failed[0].0.ends_with("ghost.txt"));
+        assert_eq!(report.problems.len(), 1);
+        let problem = report.problems.iter().next().unwrap();
+        assert!(problem.path.ends_with("ghost.txt"));
+        assert_eq!(problem.op, crate::outcome::Op::Move);
     }
 
     #[test]

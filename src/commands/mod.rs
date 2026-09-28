@@ -4,28 +4,93 @@ pub mod analyze;
 pub mod compare;
 pub mod dedupe;
 pub mod distribute;
+pub(crate) mod guard;
 pub mod interactive;
 pub mod organize;
+pub mod reorganize;
 pub mod restore;
 
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 
 use crate::{
     cli::{Cli, Command},
     executor::ExecutionReport,
+    obs,
+    outcome::Problems,
+    scan::ScanResult,
     ui,
 };
 
-/// How many failures to list before summarising the rest.
+/// Skipped entries counted by reason, for the run log.
+pub(crate) fn skip_counts(scan: &ScanResult) -> std::collections::BTreeMap<&'static str, usize> {
+    let mut counts = std::collections::BTreeMap::new();
+    for skipped in &scan.skipped {
+        *counts.entry(skipped.reason.key()).or_insert(0) += 1;
+    }
+    counts
+}
+
+/// How many individual problems to list before summarising the rest.
 const FAILURE_LIMIT: usize = 10;
+
+/// Prints everything that went wrong, grouped by cause.
+///
+/// Grouping matters: twenty lines of `Permission denied` teach nobody anything,
+/// while "18 permission denied, pick a folder you own" is something a person can
+/// act on. Individual paths follow, capped unless `--verbose` is given.
+pub(crate) fn print_problems(root: &Path, problems: &Problems, verbose: bool) {
+    if problems.is_empty() {
+        return;
+    }
+    ui::warn(&format!(
+        "{} could not be processed:",
+        ui::plural(problems.len(), "item")
+    ));
+    for (cause, count) in problems.by_cause() {
+        let hint = cause.hint().map(|h| format!("  ({h})")).unwrap_or_default();
+        ui::hint(&format!("{:<28} {count:>5}{hint}", cause.label()));
+    }
+    let limit = if verbose { usize::MAX } else { FAILURE_LIMIT };
+    for problem in problems.iter().take(limit) {
+        ui::hint(&format!(
+            "{}: {}",
+            ui::rel(root, &problem.path),
+            problem.message
+        ));
+    }
+    if problems.len() > limit {
+        ui::hint(&format!(
+            "… and {} more (use --verbose to list them all)",
+            problems.len() - limit
+        ));
+    }
+}
 
 /// Runs whichever command the user asked for (interactive menu if none).
 pub fn dispatch(cli: Cli) -> Result<()> {
+    let strict = cli.strict;
+    let outcome = dispatch_command(cli);
+    // A run that skipped items still did the work it could, so it succeeds
+    // unless the caller asked to be told otherwise.
+    if outcome.is_ok() && strict {
+        let metrics = obs::snapshot();
+        if metrics.failed > 0 {
+            bail!(
+                "{} item(s) were skipped and --strict was given",
+                metrics.failed
+            );
+        }
+    }
+    outcome
+}
+
+fn dispatch_command(cli: Cli) -> Result<()> {
     match cli.command {
         None => interactive::run(),
         Some(Command::Organize(args)) => organize::run(&args),
+        Some(Command::Reorganize(args)) => reorganize::run(&args),
         Some(Command::Dedupe(args)) => dedupe::run(&args),
         Some(Command::Compare(args)) => compare::run(&args),
         Some(Command::Analyze(args)) => analyze::run(&args),
@@ -38,26 +103,24 @@ pub fn dispatch(cli: Cli) -> Result<()> {
 
 /// Prints the outcome of an executed plan and how to undo it.
 pub(crate) fn print_execution(root: &Path, report: &ExecutionReport) {
+    obs::metrics(|m| m.absorb_execution(report));
+    obs::event(obs::Event::Execute {
+        journal_id: report.journal_id.clone(),
+        moved: report.moved,
+        bytes: report.bytes,
+        dirs_removed: report.dirs_removed,
+        failed: report.problems.len(),
+        ms: 0,
+    });
     ui::heading("Done");
     ui::success(&format!(
         "Moved {} ({})",
         ui::plural(report.moved, "item"),
         ui::format_size(report.bytes)
     ));
-    if !report.failed.is_empty() {
-        ui::warn(&format!(
-            "{} could not be moved:",
-            ui::plural(report.failed.len(), "item")
-        ));
-        for (path, reason) in report.failed.iter().take(FAILURE_LIMIT) {
-            ui::hint(&format!("{}: {reason}", ui::rel(root, path)));
-        }
-        if report.failed.len() > FAILURE_LIMIT {
-            ui::hint(&format!(
-                "… and {} more",
-                report.failed.len() - FAILURE_LIMIT
-            ));
-        }
+    // Already counted above, so only the printing is left to do here.
+    if !report.problems.is_empty() {
+        print_problems(root, &report.problems, false);
     }
     if !report.journal_id.is_empty() {
         ui::info(&format!("Recorded as run {}", report.journal_id));

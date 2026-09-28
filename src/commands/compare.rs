@@ -8,6 +8,7 @@ use dialoguer::Select;
 
 use crate::{
     cli::CompareArgs,
+    commands::guard::Guard,
     commands::print_execution,
     compare::{
         CompareAction, Comparison, Relation, build_merge_plan, compare, scan_folders,
@@ -26,6 +27,12 @@ const GROUP_PREVIEW: usize = 8;
 /// Compares the folders, reports how they relate, and applies the chosen action.
 pub fn run(args: &CompareArgs) -> Result<()> {
     let folders = validate_folders(&args.paths)?;
+    // Every folder in a compare is a candidate for moves, merges or deletes, so
+    // each one is judged, not just the primary.
+    let guard = Guard::write(&args.safety, args.yes, args.dry_run).with_filter(&args.filter);
+    for (original, resolved) in args.paths.iter().zip(&folders) {
+        guard.check(original, resolved)?;
+    }
     let rules = args.filter.to_rules()?;
     let max_depth = args.depth.map_or(usize::MAX, |d| d as usize);
 

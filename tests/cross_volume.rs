@@ -222,7 +222,7 @@ fn distribute_across_real_volumes_frees_the_source_partition_and_restores_exactl
     );
 
     let report = execute(&plan, Operation::Distribute, |_| {}).unwrap();
-    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
     assert_eq!(snapshot(&src).len(), 0, "the source is emptied");
     assert!(
         dests[0].join("album/0.dat").exists(),
