@@ -32,14 +32,7 @@ fn an_ordinary_folder_is_never_warned_about() {
 #[test]
 fn yes_does_not_unlock_the_home_directory() {
     let Some(home) = home() else { return };
-    let before: Vec<_> = fs::read_dir(&home)
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .map(|e| e.file_name())
-                .collect()
-        })
-        .unwrap_or_default();
+    let before = home_listing(&home);
 
     let out = tidy(&["organize", s(&home), "--yes"]);
     let text = all_output(&out);
@@ -49,18 +42,27 @@ fn yes_does_not_unlock_the_home_directory() {
         text.contains("--allow-system-folder"),
         "the refusal must name the way through:\n{text}"
     );
-    let after: Vec<_> = fs::read_dir(&home)
+    assert_eq!(
+        before,
+        home_listing(&home),
+        "nothing in the home directory may have moved"
+    );
+}
+
+/// Everything in the home directory except the scratch base, which the other
+/// tests in this binary create and delete in parallel with this one.
+fn home_listing(home: &std::path::Path) -> Vec<String> {
+    let mut names: Vec<String> = fs::read_dir(home)
         .map(|entries| {
             entries
                 .filter_map(Result::ok)
-                .map(|e| e.file_name())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .filter(|name| name != "tidy-up-tests")
                 .collect()
         })
         .unwrap_or_default();
-    assert_eq!(
-        before, after,
-        "nothing in the home directory may have moved"
-    );
+    names.sort();
+    names
 }
 
 /// The override gets you to the question, not past it. With no terminal to
