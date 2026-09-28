@@ -40,8 +40,8 @@ Every number comes from this repository at the commit the paper describes:
 
 | Figure | Source |
 |---|---|
-| 353 tests, zero failures | `cargo test` |
+| 363 tests, zero failures | `cargo test` |
 | Zero lint warnings | `cargo clippy --all-targets` |
 | 10 direct / 54 transitive dependencies | `cargo tree` |
-| 5,726 lines added | `wc -l` over the modules listed in the availability section |
+| 6,195 lines added | `wc -l` over the modules listed in the availability section |
 | 2.24 MiB release binary | `cargo build --release` (LTO, stripped) |
