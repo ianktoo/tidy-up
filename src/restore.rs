@@ -10,6 +10,7 @@ use crate::{
     error::{IoContext, Result},
     fsops::{move_path, unique_path},
     journal::{Journal, Record},
+    outcome::{Op, Problems},
 };
 
 /// What to do when a file's original location is occupied again.
@@ -42,16 +43,18 @@ pub struct RestoreReport {
     pub conflicts: Vec<PathBuf>,
     /// Items that no longer exist where the journal says they are (deleted or purged).
     pub missing: Vec<PathBuf>,
-    /// Items that could not be moved, with the reason.
-    pub failed: Vec<(PathBuf, String)>,
+    /// Items that could not be moved back, with the reason.
+    pub problems: Problems,
     /// Empty folders created by the run that were removed again.
     pub dirs_removed: usize,
+    /// Folders the run had deleted, put back (only `reorganize` deletes any).
+    pub dirs_created: usize,
 }
 
 impl RestoreReport {
     /// `true` if everything that could be restored was.
     pub fn is_clean(&self) -> bool {
-        self.conflicts.is_empty() && self.failed.is_empty()
+        self.conflicts.is_empty() && self.problems.is_empty()
     }
 }
 
@@ -103,9 +106,16 @@ pub fn restore(
                     Ok(()) => report.restored += 1,
                     Err(e) => {
                         report.renamed.retain(|(_, new)| new != &target);
-                        report.failed.push((to.clone(), e.to_string()));
+                        report.problems.record(&current, Op::Move, &e);
                     }
                 }
+            }
+            // Put back a folder the run emptied and deleted. Records are replayed
+            // newest first, so this happens before anything moves back into it.
+            Record::DirRemoved { path }
+                if !options.dry_run && fs::create_dir_all(root.join(path)).is_ok() =>
+            {
+                report.dirs_created += 1;
             }
             // `remove_dir` only succeeds on an empty folder, which is exactly what we want.
             Record::DirCreated { path }

@@ -8,9 +8,9 @@ use console::style;
 use crate::{
     analyze::{Analysis, AnalyzeOptions, DuplicateSummary, analyze},
     cli::AnalyzeArgs,
+    commands::guard::Guard,
     dedupe::find_duplicates,
     disk::SystemDisks,
-    fsops::resolve_root,
     plan::DUPLICATES_DIR,
     rules::IgnoreRules,
     scan::{ScanOptions, scan},
@@ -28,7 +28,9 @@ pub fn run(args: &AnalyzeArgs) -> Result<()> {
     };
     let mut reports = Vec::new();
     for path in &args.paths {
-        let root = resolve_root(path)?;
+        // Reporting only: analyzing a whole drive is one of the reasons this
+        // command exists, so the guard warns and stands aside.
+        let root = Guard::read().root(path)?;
         let spinner = ui::spinner("Analyzing");
         let result = analyze(&root, &options, &SystemDisks, &mut |files| {
             spinner.set_message(format!(

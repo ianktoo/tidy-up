@@ -103,6 +103,14 @@ pub fn warn(text: &str) {
     println!("{} {text}", style("!").yellow().bold());
 }
 
+/// Warning line for something that is about to be refused.
+///
+/// Louder than [`warn`] on purpose: it is the last thing a person reads before
+/// tidy-up declines to touch a system folder.
+pub fn danger(text: &str) {
+    println!("{} {}", style("!").red().bold(), style(text).red().bold());
+}
+
 /// Dimmed hint line.
 pub fn hint(text: &str) {
     println!("  {}", style(text).dim());

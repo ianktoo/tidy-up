@@ -31,6 +31,15 @@ pub enum Error {
     /// The caller supplied something unusable (bad path, unknown id, ...).
     #[error("{0}")]
     Invalid(String),
+    /// The folder or file exists, but this user is not allowed to read it.
+    ///
+    /// Separate from [`Error::Io`] so the message can be plain and the command
+    /// layer can suggest something useful instead of printing `os error 13`.
+    #[error("cannot read {}: permission denied", .path.display())]
+    Denied {
+        /// Path that was refused.
+        path: PathBuf,
+    },
     /// JSON (de)serialization failed.
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),

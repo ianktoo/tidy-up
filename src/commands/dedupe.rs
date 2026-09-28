@@ -5,13 +5,13 @@ use console::style;
 
 use crate::{
     cli::{DedupeArgs, PurgeArgs},
+    commands::guard::Guard,
     commands::print_execution,
     dedupe::{
         DuplicateReport, build_dedupe_plan, duplicates_folder_stats, find_duplicates,
         purge_duplicates, write_report,
     },
     executor::execute,
-    fsops::resolve_root,
     journal::Operation,
     plan::DUPLICATES_DIR,
     scan::{ScanOptions, scan},
@@ -23,7 +23,9 @@ const GROUP_PREVIEW: usize = 10;
 
 /// Finds duplicates, quarantines the extra copies and recommends deletion.
 pub fn run(args: &DedupeArgs) -> Result<()> {
-    let root = resolve_root(&args.path)?;
+    let root = Guard::write(&args.safety, args.yes, args.dry_run)
+        .with_filter(&args.filter)
+        .root(&args.path)?;
     let options = ScanOptions {
         max_depth: args.depth.map_or(usize::MAX, |d| d as usize),
         rules: args.filter.to_rules()?,
@@ -135,7 +137,9 @@ fn print_groups(root: &std::path::Path, report: &DuplicateReport, verbose: bool)
 
 /// Permanently deletes the duplicates folder after confirmation.
 pub fn purge(args: &PurgeArgs) -> Result<()> {
-    let root = resolve_root(&args.path)?;
+    // Purge deletes, and a delete cannot be undone, so it gets the strictest
+    // reading of the guard: never treated as a dry run.
+    let root = Guard::write(&args.safety, args.yes, false).root(&args.path)?;
     let (files, bytes) = duplicates_folder_stats(&root);
     if files == 0 {
         ui::success(&format!("No {DUPLICATES_DIR}/ files to delete."));

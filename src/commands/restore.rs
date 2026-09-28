@@ -7,7 +7,7 @@ use console::style;
 
 use crate::{
     cli::{HistoryArgs, RestoreArgs},
-    fsops::resolve_root,
+    commands::guard::Guard,
     journal::Journal,
     restore::{ConflictPolicy, RestoreOptions, RestoreReport, restore},
     timefmt::format_utc,
@@ -27,7 +27,7 @@ pub fn active_journals(root: &Path) -> Result<Vec<Journal>> {
 
 /// Restores the most recent run (or `--id`, or `--all`).
 pub fn run(args: &RestoreArgs) -> Result<()> {
-    let root = resolve_root(&args.path)?;
+    let root = Guard::write(&args.safety, args.yes, args.dry_run).root(&args.path)?;
     let mut active = active_journals(&root)?;
 
     let selected = match (&args.id, args.all) {
@@ -123,9 +123,9 @@ fn print_report(root: &Path, report: &RestoreReport, dry_run: bool) {
         (
             "failed",
             report
-                .failed
+                .problems
                 .iter()
-                .map(|(p, why)| format!("{}: {why}", ui::rel(root, p)))
+                .map(|problem| format!("{}: {}", ui::rel(root, &problem.path), problem.message))
                 .collect(),
         ),
     ];
@@ -146,7 +146,8 @@ fn print_report(root: &Path, report: &RestoreReport, dry_run: bool) {
 
 /// Lists every recorded run for a folder.
 pub fn history(args: &HistoryArgs) -> Result<()> {
-    let root = resolve_root(&args.path)?;
+    // `history` only reads, so it warns and carries on.
+    let root = Guard::read().root(&args.path)?;
     let journals = Journal::load_all(&root)?;
     if journals.is_empty() {
         ui::info("No runs recorded for this folder yet.");

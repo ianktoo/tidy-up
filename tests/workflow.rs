@@ -98,7 +98,7 @@ fn organize_then_restore_returns_to_exact_original_state() {
     let scanned = scan(&root, &organize_options(usize::MAX)).unwrap();
     let plan = build_organize_plan(&root, &scanned, ProjectPolicy::Move);
     let report = execute(&plan, Operation::Organize, |_| {}).unwrap();
-    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
 
     let after = snapshot(&root);
     assert!(after.contains_key(Path::new("Images/holiday.jpg")));
@@ -394,7 +394,7 @@ fn compare_move_across_folders_then_restore_is_exact() {
         "two extra copies in each of two groups"
     );
     let report = execute(&plan, Operation::Compare, |_| {}).unwrap();
-    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
 
     // primary keeps its copies; extras live in the primary's _Duplicates
     assert!(t.roots[0].join("shared.txt").exists());
@@ -431,7 +431,7 @@ fn compare_merge_gathers_everything_into_the_primary_and_restore_undoes_it() {
 
     let plan = build_merge_plan(&t.roots, &files, &groups);
     let report = execute(&plan, Operation::Compare, |_| {}).unwrap();
-    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
 
     let a = snapshot(&t.roots[0]);
     assert_eq!(a[Path::new("only-a.txt")], "only in a");
@@ -565,7 +565,7 @@ fn distribute_for_test(
     let allocation = allocate(&collected.units, &destinations, &strategy, &limits, prefer).unwrap();
     let plan = build_plan(&dests[0], &collected.units, &destinations, &allocation);
     let report = execute(&plan, Operation::Distribute, |_| {}).unwrap();
-    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
     (report.journal_id, dests)
 }
 
@@ -915,7 +915,7 @@ fn three_nearly_full_partitions_are_levelled_by_the_fill_strategy() {
     let before = snapshot(&src);
     let plan = build_plan(&dests[0], &collected.units, &destinations, &allocation);
     let report = execute(&plan, Operation::Distribute, |_| {}).unwrap();
-    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert!(report.problems.is_empty(), "{:?}", report.problems);
     assert_eq!(
         (
             files_under(&dests[0]),

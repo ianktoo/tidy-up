@@ -7,8 +7,10 @@ use console::style;
 
 use crate::{
     cli::DistributeArgs,
+    commands::guard::Guard,
     commands::print_execution,
     disk::SystemDisks,
+    disk::nearest_existing,
     distribute::{
         Allocation, CollectOptions, Destination, Layout, Limits, SourceImpact, Strategy, Unit,
         allocate, build_plan, collect_units, probe_destinations, projected_fill, source_impact,
@@ -22,6 +24,16 @@ use crate::{
 /// Scans the sources, decides the split, previews it, and moves the files.
 pub fn run(args: &DistributeArgs) -> Result<()> {
     let (sources, dests) = validate_locations(&args.from, &args.to)?;
+    // Destinations matter as much as sources: `--to C:\Windows` is every bit as
+    // bad as `--from`. A destination that does not exist yet is judged by the
+    // nearest folder that does, which is where it would be created.
+    let guard = Guard::write(&args.safety, args.yes, args.dry_run).with_filter(&args.filter);
+    for (original, resolved) in args.from.iter().zip(&sources) {
+        guard.check(original, resolved)?;
+    }
+    for (original, resolved) in args.to.iter().zip(&dests) {
+        guard.check(original, nearest_existing(resolved))?;
+    }
     let rules = args.filter.to_rules()?;
     let destinations = probe_destinations(&dests, &SystemDisks)?;
     let strategy = if args.ratio.is_empty() {

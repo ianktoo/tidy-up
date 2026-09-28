@@ -40,6 +40,17 @@ pub enum SkipReason {
     UnsupportedName,
     /// Metadata or directory contents could not be read.
     Unreadable,
+    /// The operating system refused to let this user read it.
+    ///
+    /// Separate from [`SkipReason::Unreadable`] because it is the one a user can
+    /// usually do something about, and saying so is the difference between
+    /// "tidy-up is broken" and "you do not own that folder".
+    Denied,
+    /// Marked by the operating system as one of its own (the Windows SYSTEM
+    /// attribute).
+    ///
+    /// Never lifted by `--include-hidden`: a file Windows owns is not merely hidden.
+    SystemAttribute,
 }
 
 impl SkipReason {
@@ -57,6 +68,39 @@ impl SkipReason {
             SkipReason::AlreadyOrganized => "already-organized folders",
             SkipReason::UnsupportedName => "non-UTF-8 names",
             SkipReason::Unreadable => "unreadable items",
+            SkipReason::Denied => "items you do not have permission to read",
+            SkipReason::SystemAttribute => "items the operating system marks as its own",
+        }
+    }
+
+    /// Stable machine token for logs and counters.
+    ///
+    /// [`label`](Self::label) is prose meant for people and must never be used as
+    /// a key: rewording it would silently break every log already written.
+    pub fn key(&self) -> &'static str {
+        match self {
+            SkipReason::Ignored(_) => "ignored",
+            SkipReason::SystemFile => "system_file",
+            SkipReason::Shortcut => "shortcut",
+            SkipReason::Hidden => "hidden",
+            SkipReason::Project => "project",
+            SkipReason::Folder => "folder",
+            SkipReason::Symlink => "symlink",
+            SkipReason::ToolFolder => "tool_folder",
+            SkipReason::AlreadyOrganized => "already_organized",
+            SkipReason::UnsupportedName => "unsupported_name",
+            SkipReason::Unreadable => "unreadable",
+            SkipReason::Denied => "denied",
+            SkipReason::SystemAttribute => "system_attribute",
+        }
+    }
+
+    /// Classifies a failed read: a refusal is worth saying out loud, anything
+    /// else is merely unreadable.
+    pub fn from_io(error: &std::io::Error) -> SkipReason {
+        match error.kind() {
+            std::io::ErrorKind::PermissionDenied => SkipReason::Denied,
+            _ => SkipReason::Unreadable,
         }
     }
 }
@@ -118,27 +162,37 @@ pub struct ScanOptions {
 }
 
 /// Scans `root` according to `opts`.
+///
+/// Only the root can fail the scan. Everything below it survives: a folder that
+/// cannot be listed, an entry whose metadata is refused, a name that is not valid
+/// UTF-8, each becomes a [`Skipped`] entry and the walk carries on. A scan of a
+/// large tree with one bad corner still returns every other file.
 pub fn scan(root: &Path, opts: &ScanOptions) -> Result<ScanResult> {
+    if let Err(source) = fs::read_dir(root) {
+        return Err(match source.kind() {
+            std::io::ErrorKind::PermissionDenied => Error::Denied {
+                path: root.to_path_buf(),
+            },
+            _ => Error::Io {
+                path: root.to_path_buf(),
+                source,
+            },
+        });
+    }
     let mut out = ScanResult::default();
-    walk(root, 1, opts, &mut out)?;
+    walk(root, 1, opts, &mut out);
     Ok(out)
 }
 
-fn walk(dir: &Path, depth: usize, opts: &ScanOptions, out: &mut ScanResult) -> Result<()> {
+fn walk(dir: &Path, depth: usize, opts: &ScanOptions, out: &mut ScanResult) {
     let read = match fs::read_dir(dir) {
         Ok(read) => read,
-        Err(_) if depth > 1 => {
+        Err(source) => {
             out.skipped.push(Skipped {
                 path: dir.to_path_buf(),
-                reason: SkipReason::Unreadable,
+                reason: SkipReason::from_io(&source),
             });
-            return Ok(());
-        }
-        Err(source) => {
-            return Err(Error::Io {
-                path: dir.to_path_buf(),
-                source,
-            });
+            return;
         }
     };
     let mut entries: Vec<_> = read.filter_map(|e| e.ok()).collect();
@@ -157,9 +211,12 @@ fn walk(dir: &Path, depth: usize, opts: &ScanOptions, out: &mut ScanResult) -> R
             skip(SkipReason::UnsupportedName);
             continue;
         };
-        let Ok(meta) = fs::symlink_metadata(&path) else {
-            skip(SkipReason::Unreadable);
-            continue;
+        let meta = match fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(source) => {
+                skip(SkipReason::from_io(&source));
+                continue;
+            }
         };
         if meta.file_type().is_symlink() {
             skip(SkipReason::Symlink);
@@ -181,6 +238,12 @@ fn walk(dir: &Path, depth: usize, opts: &ScanOptions, out: &mut ScanResult) -> R
             skip(reason);
             continue;
         }
+        // Not governed by `--include-hidden`: asking to see dot-files is not
+        // asking to move the operating system.
+        if has_system_attribute(&meta) {
+            skip(SkipReason::SystemAttribute);
+            continue;
+        }
         if opts.rules.skips_hidden() && is_hidden(&name, &meta) {
             skip(SkipReason::Hidden);
             continue;
@@ -190,7 +253,7 @@ fn walk(dir: &Path, depth: usize, opts: &ScanOptions, out: &mut ScanResult) -> R
             if is_project_dir(&path) {
                 out.projects.push(path);
             } else if depth < opts.max_depth {
-                walk(&path, depth + 1, opts, out)?;
+                walk(&path, depth + 1, opts, out);
             } else {
                 skip(SkipReason::Folder);
             }
@@ -204,10 +267,10 @@ fn walk(dir: &Path, depth: usize, opts: &ScanOptions, out: &mut ScanResult) -> R
             });
         }
     }
-    Ok(())
 }
 
-/// Dot-files everywhere, plus the HIDDEN/SYSTEM attributes on Windows.
+/// Dot-files everywhere, plus the HIDDEN attribute on Windows and the `UF_HIDDEN`
+/// flag on macOS.
 pub(crate) fn is_hidden(name: &str, meta: &Metadata) -> bool {
     name.starts_with('.') || has_hidden_attribute(meta)
 }
@@ -215,12 +278,37 @@ pub(crate) fn is_hidden(name: &str, meta: &Metadata) -> bool {
 #[cfg(windows)]
 fn has_hidden_attribute(meta: &Metadata) -> bool {
     use std::os::windows::fs::MetadataExt;
-    const HIDDEN_OR_SYSTEM: u32 = 0x2 | 0x4;
-    meta.file_attributes() & HIDDEN_OR_SYSTEM != 0
+    const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+    meta.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0
+}
+
+/// `chflags hidden` sets a flag no dot-file check would ever notice.
+#[cfg(target_os = "macos")]
+fn has_hidden_attribute(meta: &Metadata) -> bool {
+    use std::os::macos::fs::MetadataExt;
+    const UF_HIDDEN: u32 = 0x8000;
+    meta.st_flags() & UF_HIDDEN != 0
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn has_hidden_attribute(_meta: &Metadata) -> bool {
+    false
+}
+
+/// Whether Windows marks this as one of its own files.
+///
+/// Kept apart from [`is_hidden`] deliberately. The two attributes used to be
+/// tested together, which meant `--include-hidden` also un-skipped everything
+/// Windows owns; asking to see dot-files is not asking to move `pagefile.sys`.
+#[cfg(windows)]
+pub(crate) fn has_system_attribute(meta: &Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
+    meta.file_attributes() & FILE_ATTRIBUTE_SYSTEM != 0
 }
 
 #[cfg(not(windows))]
-fn has_hidden_attribute(_meta: &Metadata) -> bool {
+pub(crate) fn has_system_attribute(_meta: &Metadata) -> bool {
     false
 }
 
@@ -330,20 +418,29 @@ mod tests {
                 .expect("attrib is part of Windows");
             assert!(status.success());
         }
-        let hidden = scan(dir.path(), &opts(1)).unwrap();
-        assert_eq!(names(&hidden), ["plain.txt"]);
+        let scanned = scan(dir.path(), &opts(1)).unwrap();
+        assert_eq!(names(&scanned), ["plain.txt"]);
+        let reasons =
+            |want: SkipReason| scanned.skipped.iter().filter(|s| s.reason == want).count();
+        assert_eq!(reasons(SkipReason::Hidden), 1, "only the HIDDEN one");
         assert_eq!(
-            hidden
-                .skipped
-                .iter()
-                .filter(|s| s.reason == SkipReason::Hidden)
-                .count(),
-            2
+            reasons(SkipReason::SystemAttribute),
+            1,
+            "the SYSTEM one is reported as what it is, not as merely hidden"
         );
 
+        // Asking for hidden files is not asking for the operating system: the
+        // HIDDEN file comes back, the SYSTEM file stays put.
         let mut options = opts(1);
         options.rules = IgnoreRules::new().include_hidden(true);
-        assert_eq!(scan(dir.path(), &options).unwrap().files.len(), 3);
+        let with_hidden = scan(dir.path(), &options).unwrap();
+        assert_eq!(names(&with_hidden), ["attr-hidden.txt", "plain.txt"]);
+        assert!(
+            with_hidden
+                .skipped
+                .iter()
+                .any(|s| s.reason == SkipReason::SystemAttribute)
+        );
     }
 
     /// Linux and friends allow any bytes in a file name. macOS (APFS and HFS+) rejects names that
@@ -381,6 +478,99 @@ mod tests {
     #[test]
     fn missing_root_is_an_error() {
         assert!(scan(Path::new("/no/such/dir/anywhere"), &opts(1)).is_err());
+    }
+
+    /// One bad corner of a tree must cost that corner and nothing else.
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_subfolder_is_reported_and_the_rest_still_scans() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        touch(dir.path(), "keep.txt");
+        touch(dir.path(), "readable/fine.txt");
+        let locked = dir.path().join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::write(locked.join("hidden-away.txt"), "x").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = scan(dir.path(), &opts(usize::MAX)).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+
+        assert!(
+            names(&result).contains(&"keep.txt".to_string()),
+            "the rest of the tree is still returned"
+        );
+        assert!(names(&result).contains(&"fine.txt".to_string()));
+        if names(&result).contains(&"hidden-away.txt".to_string()) {
+            return; // running as root: nothing is unreadable
+        }
+        assert!(
+            result
+                .skipped
+                .iter()
+                .any(|s| s.reason == SkipReason::Denied && s.path == locked),
+            "and the folder that failed is named, with the reason: {:?}",
+            result.skipped
+        );
+    }
+
+    /// The root is the one place a failure is worth stopping for, and a refusal
+    /// there must say so rather than printing an error number.
+    #[cfg(unix)]
+    #[test]
+    fn a_root_this_user_cannot_read_is_a_permission_error() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let locked = dir.path().join("locked");
+        fs::create_dir(&locked).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = scan(&locked, &opts(1));
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+
+        match result {
+            Err(Error::Denied { path }) => assert_eq!(path, locked),
+            Ok(_) => {} // running as root
+            Err(other) => panic!("expected a permission error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn every_skip_reason_has_a_unique_stable_key() {
+        let all = [
+            SkipReason::Ignored("x".into()),
+            SkipReason::SystemFile,
+            SkipReason::Shortcut,
+            SkipReason::Hidden,
+            SkipReason::Project,
+            SkipReason::Folder,
+            SkipReason::Symlink,
+            SkipReason::ToolFolder,
+            SkipReason::AlreadyOrganized,
+            SkipReason::UnsupportedName,
+            SkipReason::Unreadable,
+            SkipReason::Denied,
+            SkipReason::SystemAttribute,
+        ];
+        let mut keys: Vec<_> = all.iter().map(SkipReason::key).collect();
+        let total = keys.len();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), total, "keys go into logs and must not collide");
+        assert!(all.iter().all(|r| !r.label().is_empty()));
+    }
+
+    #[test]
+    fn failed_reads_are_classified_by_whether_the_user_could_fix_them() {
+        use std::io::ErrorKind;
+        assert_eq!(
+            SkipReason::from_io(&ErrorKind::PermissionDenied.into()),
+            SkipReason::Denied
+        );
+        assert_eq!(
+            SkipReason::from_io(&ErrorKind::InvalidData.into()),
+            SkipReason::Unreadable
+        );
     }
 
     #[test]

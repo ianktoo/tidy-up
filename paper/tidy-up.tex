@@ -1,0 +1,1445 @@
+% =============================================================================
+%  Guarded Bulk File Reorganization
+%  Ian Too
+%
+%  Compile with any of:
+%     pdflatex tidy-up.tex   (twice, for cross-references)
+%     lualatex tidy-up.tex   (recommended: full Unicode, including CJK samples)
+%     xelatex  tidy-up.tex
+%
+%  The preamble detects the engine and configures Unicode handling to match.
+% =============================================================================
+\documentclass[11pt,a4paper]{article}
+
+% ------------------------------------------------------------------ encoding
+\usepackage{iftex}
+% TeX counts \else and \fi even inside the branch it is skipping, so neither
+% branch below may contain a nested conditional. Font selection is therefore
+% recorded here and acted on after the conditional closes.
+\ifPDFTeX
+  \usepackage[utf8]{inputenc}
+  \usepackage[T1]{fontenc}
+  \usepackage{lmodern}
+  \usepackage{textcomp}
+  % pdfTeX cannot typeset arbitrary scripts from a Latin font. Samples outside
+  % Latin are shown transliterated, with a marker, so the point survives even
+  % when the glyphs cannot.
+  \newcommand{\unisample}[2]{\texttt{#2}\,\textsuperscript{\tiny(non-Latin)}}
+\else
+  \usepackage{fontspec}
+  \defaultfontfeatures{Ligatures=TeX}
+  \newcommand{\unisample}[2]{\texttt{#2}\,\textsuperscript{\tiny(non-Latin)}}
+  % Latin Modern has no CJK coverage. Try the usual faces on Linux, macOS and
+  % Windows in turn; \providecommand means the first one found wins.
+  \newcommand{\trycjkfont}[1]{\IfFontExistsTF{#1}{\providecommand{\cjkfontname}{#1}}{}}
+  \trycjkfont{Noto Serif CJK JP}
+  \trycjkfont{Noto Sans CJK JP}
+  \trycjkfont{Hiragino Mincho ProN}
+  \trycjkfont{Yu Mincho}
+  \trycjkfont{MS Mincho}
+  \trycjkfont{SimSun}
+\fi
+
+% Only reached with a Unicode engine that found a CJK face; otherwise the
+% transliterating definition above stands and the document still builds.
+\makeatletter
+\@ifundefined{cjkfontname}{}{%
+  \newfontfamily\cjkfont{\cjkfontname}%
+  \renewcommand{\unisample}[2]{{\cjkfont #1}}%
+}
+\makeatother
+
+\usepackage[english]{babel}
+\usepackage{csquotes}
+
+% -------------------------------------------------------------------- layout
+\usepackage[margin=1.05in,headheight=14pt]{geometry}
+\usepackage{microtype}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{caption}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+\usepackage[colorlinks=true,allcolors=darkblue,breaklinks=true]{hyperref}
+\usepackage{cleveref}
+
+\definecolor{darkblue}{RGB}{15,60,125}
+\definecolor{codebg}{RGB}{248,248,246}
+\definecolor{codekw}{RGB}{140,30,110}
+\definecolor{codecm}{RGB}{95,110,95}
+\definecolor{codest}{RGB}{30,110,60}
+\definecolor{rulegrey}{RGB}{120,120,120}
+
+% ---------------------------------------------------------- arXiv-style head
+\captionsetup{font=small,labelfont=bf}
+\titleformat{\section}{\normalfont\large\bfseries}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalfont\normalsize\bfseries}{\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}{\normalfont\normalsize\itshape}{\thesubsubsection}{0.6em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\fancyhead[L]{\footnotesize\scshape Guarded Bulk File Reorganization}
+\fancyhead[R]{\footnotesize\thepage}
+
+% ORCID mark: use the proper logo when the package is installed, a plain link
+% otherwise, so the document builds on a bare TeX distribution.
+\newif\ifhasorcidlink
+\IfFileExists{orcidlink.sty}{\hasorcidlinktrue}{\hasorcidlinkfalse}
+\ifhasorcidlink
+  \usepackage{orcidlink}
+  \newcommand{\orcidmark}[1]{\,\orcidlink{#1}}
+\else
+  \newcommand{\orcidmark}[1]{\,{\footnotesize\href{https://orcid.org/#1}{[ORCID]}}}
+\fi
+
+% ------------------------------------------------------------------ listings
+\lstdefinelanguage{RustLang}{
+  keywords={fn,let,mut,pub,struct,enum,impl,match,if,else,for,while,loop,return,
+            use,mod,const,static,trait,where,self,Self,as,in,ref,move,dyn,crate,
+            true,false,Some,None,Ok,Err,continue,break},
+  keywordstyle=\color{codekw}\bfseries,
+  ndkeywords={u32,u64,i64,usize,bool,str,String,PathBuf,Path,Vec,Option,Result,
+              BTreeMap,BTreeSet,HashSet},
+  ndkeywordstyle=\color{darkblue},
+  sensitive=true,
+  comment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  commentstyle=\color{codecm}\itshape,
+  stringstyle=\color{codest},
+  morestring=[b]",
+}
+\lstset{
+  language=RustLang,
+  basicstyle=\ttfamily\footnotesize,
+  backgroundcolor=\color{codebg},
+  frame=leftline,
+  framerule=1.1pt,
+  rulecolor=\color{rulegrey},
+  framesep=7pt,
+  xleftmargin=10pt,
+  breaklines=true,
+  breakatwhitespace=true,
+  showstringspaces=false,
+  columns=fullflexible,
+  captionpos=b,
+  aboveskip=1.0em,
+  belowskip=1.0em,
+}
+\lstdefinestyle{shell}{
+  language={},
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle={},
+  commentstyle={},
+}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\tool}{\textsc{tidy-up}}
+
+% ------------------------------------------------------------------ metadata
+\hypersetup{
+  pdftitle={Guarded Bulk File Reorganization: System-Directory Detection, Survivable Execution, and Reversible Re-grouping},
+  pdfauthor={Ian Too},
+  pdfsubject={Systems software; file management; software safety},
+  pdfkeywords={file system, safety, cross-platform, Rust, undo, observability},
+}
+
+\begin{document}
+
+% =============================================================================
+\begin{center}
+  {\LARGE\bfseries Guarded Bulk File Reorganization:\\[0.25em]
+   System-Directory Detection, Survivable Execution,\\[0.25em]
+   and Reversible Re-grouping\par}
+  \vspace{1.4em}
+  {\large Ian Too\orcidmark{0009-0000-4888-1941}\par}
+  \vspace{0.4em}
+  {\small\href{https://orcid.org/0009-0000-4888-1941}{\texttt{https://orcid.org/0009-0000-4888-1941}}\par}
+  \vspace{0.2em}
+  {\small Independent Researcher\\
+   \href{https://github.com/ianktoo/tidy-up}{\texttt{github.com/ianktoo/tidy-up}}\par}
+  \vspace{1.6em}
+\end{center}
+
+\begin{center}
+\begin{minipage}{0.86\textwidth}
+\rule{\textwidth}{0.8pt}\\[0.5em]
+{\centering\textbf{Abstract}\par}
+\vspace{0.4em}
+\small
+Tools that reorganize files in bulk are, by construction, capable of destroying an
+operating system installation: the same loop that sorts a downloads folder into
+categories will happily scatter \code{C:\textbackslash Windows} across a dozen
+subdirectories. Existing utilities address this weakly or not at all, relying on the
+user to type the right path. We present the design, implementation and evaluation of
+a guarded bulk reorganization system built into \tool{}, a cross-platform
+command-line tool written in Rust. Four contributions are described. First, a
+\emph{pure, platform-parameterized classifier} that judges whether a directory is
+managed by the operating system, returning a three-level risk verdict with
+machine-readable reasons; because the target platform is an argument rather than a
+compile-time constant, all three rule tables (Windows, macOS, Linux) are exercised
+from a single host, and a 24-entry negative corpus guards against warning fatigue.
+Second, an \emph{empirical writability probe} that sidesteps the well-known
+disagreement between POSIX mode bits, access-control lists, read-only mounts and
+macOS System Integrity Protection by attempting a write and observing the result.
+Third, a \emph{survival architecture} in which per-item failures are classified,
+collected and reported rather than propagated, with a single stated exception: a
+change that cannot be journaled is fatal, because a change that cannot be journaled
+cannot be undone. Fourth, an \emph{idempotent re-grouping algorithm} that unpacks an
+arbitrarily nested directory tree and re-files it under an ordered list of grouping
+keys, computes which directories the operation will empty, and records their removal
+so that undo restores the original tree exactly, including directories that held
+nothing. The implementation adds 5{,}633 lines across nine modules and introduces
+\emph{zero} new dependencies, keeping the transitive dependency count at 54 crates.
+An evaluation over 350 automated tests reports the properties each mechanism is
+designed to guarantee, including a byte-for-byte reorganize/undo round trip and the
+non-overridability of a genuine permission wall.
+\\[0.6em]
+\textbf{Keywords:} file system safety; bulk reorganization; cross-platform systems;
+capability probing; idempotence; reversible operations; observability; Rust.
+\\[0.3em]
+\rule{\textwidth}{0.8pt}
+\end{minipage}
+\end{center}
+
+\vspace{1.2em}
+
+% =============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+A bulk file organizer reads a directory, decides where each file belongs, and moves
+it there. The mechanism is simple and the failure mode is severe. Nothing in the
+mechanism distinguishes a downloads folder from a system directory: both are
+directories full of files, and the loop that tidies one will tidy the other. A user
+who types the wrong path, a script that interpolates an empty variable into
+\code{organize "\$DIR"}, or an administrator experimenting with elevated privileges
+can, in a single command, relocate the contents of an operating system installation
+into category subdirectories.
+
+The conventional defences are inadequate in a specific and instructive way. Dry-run
+modes, confirmation prompts, refusal to overwrite, and undo journals all protect the
+user against mistakes made \emph{inside} a correctly chosen directory. None of them
+protects against choosing the wrong directory in the first place. An undo journal in
+particular offers false comfort: replaying it restores file locations, but it cannot
+restore a system that failed to boot in the interim, and it cannot help at all if the
+files that moved were the ones the undo procedure itself depends on.
+
+This paper describes what we added to \tool{}, an existing open-source cross-platform
+organizer, to close that gap, together with three further mechanisms that the gap
+analysis exposed as prerequisites. \Cref{sec:related} situates the work.
+\Cref{sec:overview} gives the system architecture. \Cref{sec:detect} presents the
+detection classifier, which is the principal contribution. \Cref{sec:perm} treats
+permission determination, \Cref{sec:survival} the survival architecture,
+\Cref{sec:regroup} the re-grouping algorithm, and \Cref{sec:obs} observability.
+\Cref{sec:eval} evaluates the result and \Cref{sec:discussion} discusses its limits.
+
+\subsection{Problem statement}
+
+Let $D$ be the set of directories on a machine. A bulk reorganizer applies a
+transformation $T : D \rightarrow D$ that relocates the regular files beneath a root
+$r \in D$. We require a predicate
+\[
+  \mathrm{risk} : D \rightarrow \{\textsf{Safe}, \textsf{Caution}, \textsf{Dangerous}\}
+\]
+and a policy that maps a risk level, an access intent, and a set of user-supplied
+flags to one of \{proceed silently, warn, warn and confirm, refuse\}. Four properties
+are desirable, and they are in tension:
+
+\begin{description}[leftmargin=1.6em,itemsep=0.25em]
+  \item[P1 (Soundness, informal).] Directories the operating system manages are not
+    classified \textsf{Safe}.
+  \item[P2 (Precision).] Ordinary user directories are classified \textsf{Safe}. A
+    system that warns about \code{D:\textbackslash Downloads} trains users to bypass
+    it, destroying P1 in practice.
+  \item[P3 (Testability).] The rules for each platform can be validated without
+    access to that platform and without touching real system directories.
+  \item[P4 (Escapability).] A user who genuinely intends to operate on a flagged
+    directory can, except where the operating system itself refuses.
+\end{description}
+
+P2 deserves emphasis. A guard is a human-factors artifact as much as a technical one.
+Warning fatigue is the dominant failure mode of safety mechanisms in interactive
+tools, and a false positive is therefore not a cosmetic defect but a direct attack on
+the mechanism's purpose. This observation drove two design decisions reported in
+\Cref{sec:detect:weak} that deliberately reduce coverage.
+
+\subsection{Contributions}
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.25em]
+  \item A pure, platform-parameterized system-directory classifier with
+    machine-readable reasons and per-reason severity, validated by a table-driven
+    corpus that exercises all three platforms from one host (\Cref{sec:detect}).
+  \item An empirical writability probe that is correct in the presence of ACLs,
+    read-only mounts and macOS System Integrity Protection, and a corresponding
+    policy rule that a permission wall is never overridable (\Cref{sec:perm}).
+  \item A survival architecture with a classified failure taxonomy, a single
+    documented fatal exception, and grouped, actionable end-of-run reporting
+    (\Cref{sec:survival}).
+  \item An idempotent, reversible re-grouping algorithm, including the computation of
+    directories emptied by a run and their restoration on undo (\Cref{sec:regroup}).
+  \item An evaluation, and an account of the engineering constraint --- zero new
+    dependencies --- that shaped every one of these designs (\Cref{sec:eval}).
+\end{enumerate}
+
+% =============================================================================
+\section{Background and related work}
+\label{sec:related}
+
+\subsection{Guarded destructive operations}
+
+The idea of refusing a dangerous argument is old and its canonical instance is
+instructive. GNU \code{rm} implements \code{--preserve-root}, enabled by default,
+which refuses to operate recursively on \code{/}. The design is notable for what it
+does \emph{not} attempt: it protects exactly one path, by exact comparison, and makes
+no judgement about \code{/usr} or \code{/home}. This is a deliberate trade toward
+precision (P2) at the expense of soundness (P1), and the reasoning is sound for a
+general-purpose tool invoked by scripts thousands of times a day.
+
+A bulk reorganizer occupies a different point on that curve. It is invoked
+interactively, rarely, on a directory the user names explicitly, and its blast radius
+is an entire subtree. The cost of a false positive is one extra keystroke; the cost of
+a false negative is an unbootable machine. We therefore extend coverage well beyond
+the filesystem root while treating every extension as a precision risk to be tested
+against a negative corpus.
+
+Package managers offer a second reference point. Both \code{dpkg} and \code{rpm}
+maintain a database of files owned by the system and refuse to let an installation
+overwrite them. That approach is sound and precise, but it presumes a curated
+database, which does not exist on Windows or macOS and which a third-party tool cannot
+construct. Our classifier approximates that database with a static rule table plus
+runtime facts.
+
+\subsection{Capability determination}
+
+Determining whether a process may write to a directory is a recurring difficulty. The
+POSIX \code{access(2)} interface answers with respect to the \emph{real} user ID,
+which is usually not the question being asked; \code{faccessat} with
+\code{AT\_EACCESS} corrects that, but neither call is authoritative. The manual page
+for \code{access(2)} explicitly warns that its result may be invalidated between the
+check and the subsequent operation, a classic time-of-check-to-time-of-use hazard,
+and both calls can disagree with the filesystem on NFS, with POSIX and NFSv4
+access-control lists, on read-only mounts, and under macOS System Integrity
+Protection, where even a process running as \code{root} is denied. On Windows the
+mode-bit model does not apply at all, and \code{FILE\_ATTRIBUTE\_READONLY} on a
+directory does not mean the directory is read-only: it signals a customized folder
+view and is set on entirely ordinary directories such as \code{Documents}.
+
+The technique of resolving this by attempting the operation is folklore in systems
+programming rather than a published result. We adopt it, scope it carefully so that it
+never runs when the caller promised not to write, and report its behaviour.
+
+\subsection{Reversible file operations}
+
+Journaling to enable undo is standard in filesystems and in version control. \tool{}
+predates this work with an append-only JSON Lines journal recording every move. The
+contribution here is the observation that a journal recording only \emph{moves} is
+insufficient once an operation also \emph{deletes} directories: replaying moves
+recreates directories that held files, by side effect, but silently loses directories
+that held nothing. \Cref{sec:regroup:undo} describes the additional record type this
+requires.
+
+% =============================================================================
+\section{System overview}
+\label{sec:overview}
+
+\tool{} is a Rust command-line tool, approximately 17{,}500 lines including tests,
+organized into layers with a strict dependency direction. \Cref{tab:modules}
+summarizes the modules, marking those introduced or substantially revised by this
+work.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Module structure. Lines include in-file unit tests.}
+\label{tab:modules}
+\begin{tabularx}{\textwidth}{@{}l l X r@{}}
+\toprule
+\textbf{Layer} & \textbf{Module} & \textbf{Responsibility} & \textbf{Lines} \\
+\midrule
+\multirow{3}{*}{classify} & \code{category} & file type from extension & 273 \\
+ & \code{rules} & user ignore rules & 239 \\
+ & \code{projects} & detect code repositories & 110 \\
+\midrule
+guard\,$^\dagger$ & \code{safety} & is this a system directory & 1{,}199 \\
+ & \code{safety\_tests} & rule-table corpus & 1{,}227 \\
+ & \code{commands::guard} & policy: warn, confirm, refuse & 330 \\
+\midrule
+survive\,$^\dagger$ & \code{outcome} & failure taxonomy and collection & 531 \\
+\midrule
+discover & \code{scan} & directory traversal & 505 \\
+\midrule
+\multirow{4}{*}{decide} & \code{plan} & organize plan & 247 \\
+ & \code{dedupe} & duplicate detection & 533 \\
+ & \code{compare} & multi-directory overlap & 460 \\
+ & \code{regroup}\,$^\dagger$ & re-grouping plan & 387 \\
+\midrule
+act & \code{executor} & perform a plan & 250 \\
+ & \code{fsops} & non-destructive primitives & 416 \\
+\midrule
+remember & \code{journal} & append-only undo log & 461 \\
+ & \code{restore} & reverse a journal & 315 \\
+\midrule
+observe\,$^\dagger$ & \code{obs} & JSON Lines run record & 595 \\
+\midrule
+present & \code{cli}, \code{commands}, \code{ui} & arguments, flows, terminal & 1{,}700 \\
+\bottomrule
+\multicolumn{4}{@{}l@{}}{\footnotesize $^\dagger$ introduced by this work}
+\end{tabularx}
+\end{table}
+
+An invariant governs the layering: \emph{detection is pure, policy is impure.} The
+\code{safety} module answers the question \enquote{what kind of directory is this}
+without reading the environment, consulting a clock, or writing anything; the
+\code{commands::guard} module decides what to do about the answer, which requires a
+terminal and a user. This separation is what makes P3 (testability) achievable, and
+it recurs throughout: \code{plan}, \code{regroup} and \code{dedupe} compute
+reviewable data structures that \code{executor} later carries out.
+
+% =============================================================================
+\section{System-directory detection}
+\label{sec:detect}
+
+\subsection{Interface}
+
+The classifier is a total function with no error case:
+\begin{lstlisting}
+pub fn classify(path: &Path, env: &Environment, facts: &Facts) -> Assessment;
+\end{lstlisting}
+
+Returning \code{Result} was considered and rejected. A classifier that can fail is one
+whose callers are tempted to write \code{unwrap\_or(Safe)}, converting every transient
+error into a silent authorization. Instead, every input that could fail is hoisted
+into \code{Facts}, whose fields are all \code{Option}:
+
+\begin{lstlisting}
+pub struct Facts {
+    pub system_attribute: Option<bool>,  // Windows FILE_ATTRIBUTE_SYSTEM
+    pub reparse_point:    Option<bool>,  // Windows junction or volume mount
+    pub mount_point:      Option<bool>,  // Unix: st_dev differs from parent
+    pub owned_by_me:      Option<bool>,  // Unix ownership
+    pub writable:         Option<bool>,  // empirical probe, Section 5
+    pub fs_type:          Option<String> // Linux /proc/self/mountinfo
+}
+\end{lstlisting}
+
+A failed syscall yields \code{None}, which the classifier treats as \emph{unknown}
+rather than as evidence in either direction. The corresponding test asserts that a
+\code{Facts::default()} --- everything unknown --- never produces a finding on its own.
+
+\subsection{Platform as a parameter}
+
+The single decision that most improves testability is making the platform an
+argument:
+
+\begin{lstlisting}
+pub enum Platform { Windows, MacOs, Linux, Other }
+\end{lstlisting}
+
+This forced a consequence that is easy to miss. Rust's \code{std::path} parses paths
+for the \emph{build} target: on Linux, \code{Path::new("C:\textbackslash\textbackslash Windows").components()}
+yields a single component, because the drive prefix is not recognized. Any classifier
+built on \code{std::path::Components} is therefore untestable across platforms by
+construction. We implement a platform-parameterized splitter:
+
+\begin{lstlisting}
+fn parts(path: &Path, platform: Platform) -> Parts;   // (prefix, components)
+\end{lstlisting}
+
+\code{Parts} normalizes four things that are individually minor and collectively the
+source of most real bugs in path matching:
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.2em]
+  \item \textbf{Verbatim prefixes.} \code{\textbackslash\textbackslash?\textbackslash C:\textbackslash Windows} and
+    \code{C:\textbackslash Windows} denote the same directory, as do
+    \code{\textbackslash\textbackslash?\textbackslash UNC\textbackslash srv\textbackslash sh} and
+    \code{\textbackslash\textbackslash srv\textbackslash sh}. An upstream function in \tool{} deliberately
+    preserves the UNC verbatim form, so the classifier must fold both spellings.
+  \item \textbf{Case.} Windows and macOS compare case-insensitively by default; Linux
+    does not. Components are case-folded only on the former.
+  \item \textbf{Trailing punctuation.} Windows silently strips trailing dots and
+    spaces from names, so \code{C:\textbackslash Windows.\textvisiblespace} resolves to
+    \code{C:\textbackslash Windows} and must match the same rule.
+  \item \textbf{Dot segments.} \code{.} is dropped and \code{..} pops, so a path is
+    judged by where it points.
+\end{enumerate}
+
+Matching is then \emph{component-wise}, never textual. The distinction is not
+pedantic: \code{C:\textbackslash Program Files Custom} has \code{C:\textbackslash Program Files} as a string
+prefix but is an entirely unrelated directory, and \code{/usrlocal} is not inside
+\code{/usr}. Both cases are asserted by name in the test suite.
+
+Note also that upstream canonicalization closes an evasion path: because the target is
+resolved before classification, a symbolic link or NTFS junction pointing at
+\code{/usr} is judged as \code{/usr}. The original spelling is retained only for the
+message shown to the user.
+
+\subsection{Rule structure}
+
+Each platform has a table of entries and, for the Unix platforms, a list of
+\emph{carve-outs} evaluated first. An entry is:
+
+\begin{lstlisting}
+struct Entry {
+    comps:    &'static [&'static str],  // components below the root
+    exact:    bool,                     // this directory only, or the subtree
+    severity: Risk,
+    label:    &'static str,             // human description
+}
+\end{lstlisting}
+
+A carve-out either declares a subtree \textsf{Safe} with respect to the path rules or
+downgrades it to \textsf{Caution}. \Cref{tab:rules} gives the substantive content.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Rule tables. \textbf{D}~=~\textsf{Dangerous} (refused), \textbf{C}~=~\textsf{Caution}
+(warn and confirm), \textbf{S}~=~carve-out suppressing broader rules. Carve-outs are
+evaluated first.}
+\label{tab:rules}
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+\textbf{Platform} & \textbf{Level} & \textbf{Locations} \\
+\midrule
+\multirow{4}{*}{Windows}
+ & D & \code{\%SystemRoot\%} (fallbacks \code{\%windir\%},
+       \code{<drive>\textbackslash Windows}); \code{\%ProgramFiles\%},
+       \code{(x86)}, \code{\%ProgramW6432\%}; \code{\%ProgramData\%};
+       \code{<drive>\textbackslash Users} (the container); \code{\%USERPROFILE\%} itself;
+       \code{AppData}; \code{\$Recycle.Bin}; \code{System Volume Information};
+       \code{Recovery}; \code{Config.Msi}; \code{PerfLogs}; \code{\$WinREAgent};
+       drive roots; UNC share roots \\
+ & C & \code{\%PUBLIC\%}; a bare reparse point \\
+ & S & anything strictly inside \code{\%TEMP\%} \\
+\midrule
+\multirow{3}{*}{macOS}
+ & D & \code{/}; \code{/System} (incl. \code{/System/Volumes/*}); \code{/Library};
+       \code{/Applications}; \code{/usr}; \code{/bin}; \code{/sbin}; \code{/etc};
+       \code{/var}; \code{/private}; \code{/cores}; \code{/Network}; \code{/.vol};
+       \code{/Volumes} and \code{/Users} as containers; \code{\$HOME} itself;
+       \code{\$HOME/Library} \\
+ & C & \code{/opt}; \code{/usr/local/*}; \code{\$HOME/Applications};
+       \code{\$HOME/.Trash}; a bare mount point \\
+ & S & \code{/Volumes/<disk>/*}; \code{/Users/<user>/*};
+       \code{/System/Volumes/Data/Users/<user>/*}; \code{/private/tmp}; \code{/tmp};
+       \code{\%TEMP\%} \\
+\midrule
+\multirow{3}{*}{Linux}
+ & D & \code{/}; \code{/bin}; \code{/sbin}; \code{/lib*}; \code{/usr}; \code{/etc};
+       \code{/boot}; \code{/dev}; \code{/proc}; \code{/sys}; \code{/run};
+       \code{/snap}; \code{/nix}; \code{/efi}; \code{/lost+found}; \code{/var};
+       \code{/home} (container); \code{/root}; \code{\$HOME} itself; any
+       pseudo-filesystem \\
+ & C & \code{/opt}; \code{/srv}; \code{/usr/local/*}; \code{/media} and \code{/mnt}
+       as containers \\
+ & S & \code{/tmp}; \code{/var/tmp}; \code{/media/<u>/<v>/*}; \code{/mnt/<x>/*};
+       \code{/run/media/<u>/<v>/*} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsubsection{Windows: variables augment, never replace}
+
+Environment variables are read once, but the name-based rules are applied relative to
+\emph{any} drive root regardless. A scrubbed environment, a service account, or a
+second Windows installation on \code{D:} therefore remains protected, while
+\code{\%SystemRoot\%} pointing at an unconventional location adds coverage rather than
+moving it. Two tests state this directly: one clears the variable map entirely and
+asserts the name rules still fire; the other sets \code{SystemRoot=E:\textbackslash Win} and asserts
+that both \code{E:\textbackslash Win\textbackslash System32} and \code{C:\textbackslash Windows} are refused.
+
+\subsubsection{macOS: firmlinks and the data volume}
+
+Two macOS-specific hazards required carve-outs. \code{/usr/local} is writable and
+full of user-installed software, so the \code{/usr} rule is downgraded there rather
+than applied. More subtly, on APFS volumes a user's home directory is reachable both
+as \code{/Users/me} and as \code{/System/Volumes/Data/Users/me}; canonicalization
+usually yields the short form, but not under all mount configurations. Without the
+second carve-out, a user's own \code{Downloads} directory would be refused as part of
+\code{/System}.
+
+System Integrity Protection has no public query interface. The
+\code{rootless\_check\_trusted} symbol is private SPI in \code{libSystem} and linking
+against it would be both unstable and inappropriate for a third-party tool. We treat
+the path table as a practical superset and rely on the writability probe
+(\Cref{sec:perm}) as the backstop: SIP-protected paths reject writes even for
+\code{root}, so \code{NotWritable} fires, and that reason is deliberately
+non-overridable.
+
+\subsubsection{Linux: pseudo-filesystems}
+
+Rather than enumerate kernel-virtual mount points, we determine the filesystem type
+by parsing \code{/proc/self/mountinfo}. The parser is a pure function of the file
+contents and the target path, which permits fixture-based testing on any host:
+
+\begin{lstlisting}
+pub(crate) fn fs_type_from_mountinfo(text: &str, path: &Path) -> Option<String>;
+\end{lstlisting}
+
+The format requires care. Field 5 is the mount point, octal-escaped so that
+\code{\textbackslash 040} denotes a space; a variable number of optional fields follows; a literal
+\code{-} separates them from the filesystem type. The longest mount point that is a
+component-wise prefix of the target wins, which resolves nested mounts correctly.
+Twenty-one pseudo-filesystem types are refused.
+
+\code{tmpfs} is deliberately \emph{absent} from that set. \code{/tmp} and
+\code{/dev/shm} are \code{tmpfs}, and \code{/tmp} is a perfectly reasonable directory
+to tidy. Including it would have been the more \enquote{complete} choice and the
+wrong one.
+
+\subsection{Composition}
+
+\Cref{alg:classify} gives the composition. Three details are load-bearing.
+
+\begin{algorithm}[t]
+\SetAlgoLined
+\DontPrintSemicolon
+\KwIn{path $p$, environment $e$, facts $f$}
+\KwOut{assessment with risk level and ordered reasons}
+$P \leftarrow \mathrm{parts}(p, e.\mathrm{platform})$\;
+$R \leftarrow \emptyset$\;
+$\mathit{inTemp} \leftarrow P$ strictly inside $\mathrm{parts}(e.\mathrm{temp})$\;
+\If{$P$ has a prefix and no components}{
+  $R \leftarrow R \cup \{\textsf{UncShareRoot}$ if UNC else $\textsf{FilesystemRoot}\}$\;
+}
+\If{$P = \mathrm{parts}(e.\mathrm{home})$}{$R \leftarrow R \cup \{\textsf{HomeRoot}\}$\;}
+\lIf{$\neg\,\mathit{inTemp}$}{$R \leftarrow R \cup \mathrm{pathRules}(P, e)$}
+\If{$f.\mathrm{fs\_type} \in \mathit{PSEUDO}$}{$R \leftarrow R \cup \{\textsf{PseudoFilesystem}\}$\;}
+\lIf{$f.\mathrm{system\_attribute} = \textsf{Some}(\top)$}{$R \leftarrow R \cup \{\textsf{SystemAttribute}\}$}
+\lIf{$f.\mathrm{writable} = \textsf{Some}(\bot)$}{$R \leftarrow R \cup \{\textsf{NotWritable}\}$}
+\lIf{$f.\mathrm{owned\_by\_me} = \textsf{Some}(\bot)$}{$R \leftarrow R \cup \{\textsf{NotOwned}\}$}
+\If{$(f.\mathrm{mount\_point} \vee f.\mathrm{reparse\_point}) \wedge R = \emptyset$}{
+  $R \leftarrow \{\textsf{MountPoint}\}$ \tcp*{only when nothing stronger fired}
+}
+sort $R$ by severity, descending\;
+remove $r \in R$ whose explanation duplicates an earlier one\;
+\Return $(\max_{r \in R} \mathrm{severity}(r), R)$, or \textsf{Safe} if $R = \emptyset$\;
+\caption{\textsc{Classify}}
+\label{alg:classify}
+\end{algorithm}
+
+\paragraph{The temporary-directory carve-out is load-bearing.}
+On two of three platforms the system temporary directory lies inside a protected
+subtree: Windows places it under \code{\%LOCALAPPDATA\%\textbackslash Temp}, and macOS
+canonicalizes it to \code{/private/var/folders/...}, matching both \code{/private} and
+\code{/var}. Without the carve-out the guard would refuse the system temporary
+directory --- a legitimate target --- and, because the project's entire pre-existing
+test suite builds its fixtures with \code{tempfile}, would have broken every test on
+first commit. The dependency between a safety rule and the test infrastructure was not
+anticipated during design and was discovered only when enumerating the rule table.
+
+\paragraph{Mount points are suppressed when anything stronger fires.}
+Every external drive is a mount point. Reporting it alongside \enquote{this is
+\code{/usr}} adds noise without information, so the reason is emitted only when it is
+the sole finding, and then only at \textsf{Caution}.
+
+\paragraph{Reasons are deduplicated by rendered explanation.}
+\code{C:\textbackslash Windows} matches the \code{\%SystemRoot\%} rule, the \code{\%windir\%} rule and
+the name rule simultaneously. The first implementation printed three near-identical
+lines. Deduplicating structurally is insufficient, because the three findings differ
+in their \code{matched} field; deduplicating by the sentence the user actually reads
+is both simpler and correct. This was found by running the tool against the real
+\code{C:\textbackslash Windows}, not by any test, and a regression test was added afterwards.
+
+\subsection{Deliberately weakened rules}
+\label{sec:detect:weak}
+
+Two candidate rules were weakened or removed on precision grounds (P2).
+
+\emph{\enquote{Outside the home directory}} was removed entirely. It is a plausible
+heuristic and would have been catastrophic in practice:
+\code{D:\textbackslash Downloads}, \code{/mnt/photos} and \code{/Volumes/Backup} are the
+\emph{normal} targets for this class of tool. A rule that fires on the normal case
+teaches users to pass the override flag reflexively, after which the guard protects
+nobody.
+
+\emph{\enquote{Shallow path}} (a directory one level below a filesystem root) was
+retained only in conjunction: it fires only when the directory is additionally not
+under the user's home and demonstrably not owned by the current user, and even then
+only at \textsf{Caution}. \code{/data}, \code{/srv2} and \code{D:\textbackslash Media} are ordinary
+directories that a naive depth rule would flag.
+
+The general principle we extracted: \emph{composition, not any single weak signal.} A
+directory that is shallow \emph{and} unowned \emph{and} unwritable \emph{and} a mount
+point is almost certainly system-managed; any one of those alone is not.
+
+\subsection{Policy}
+\label{sec:detect:policy}
+
+Policy is separated from detection and lives in \code{commands::guard}.
+\Cref{tab:policy} states it completely.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Guard policy. \code{--yes} answers a confirmation; it never substitutes for
+the override flag.}
+\label{tab:policy}
+\begin{tabularx}{\textwidth}{@{}l X X X@{}}
+\toprule
+\textbf{Risk} & \textbf{Reporting command} & \textbf{Destructive command} &
+\textbf{With \code{--allow-system-folder}} \\
+\midrule
+\textsf{Safe} & silent & silent & silent \\
+\textsf{Caution} & warn & warn, then confirm (default \emph{no}) & same \\
+\textsf{Dangerous} & warn, proceeds & \textbf{refused}, non-zero exit, names the flag &
+  warn, then confirm (default \emph{no}) \\
+\textsf{NotWritable} & warn, proceeds & \textbf{refused} & \textbf{still refused} \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Four aspects warrant comment.
+
+\textbf{\code{--yes} is not an override.} This is the property the evaluation treats
+as flagship. Automated invocations that pass \code{--yes} continue to work on ordinary
+directories and begin failing loudly on system ones. The resulting breakage of
+existing scripts is intended, and is the mechanism by which the guard reaches
+unattended use at all.
+
+\textbf{The override reaches the question, not past it.} With
+\code{--allow-system-folder} the user is still asked, the default answer is
+\emph{no}, and with no terminal attached the run stops. Obtaining a destructive
+outcome on a flagged directory requires the flag \emph{and} an affirmative answer.
+
+\textbf{A permission wall is not overridable.} No command-line flag grants permission
+that the operating system refused, and pretending otherwise would produce a run that
+fails item by item after the user has already been warned. The refusal message says
+explicitly that the flag will not help.
+
+\textbf{Reporting commands never block.} \code{analyze} and \code{history} warn and
+continue. Analyzing an entire drive is an advertised use of the tool; blocking it
+would have been a regression, and an existing test covers it.
+
+Two further points of mechanism. First, the guard runs at the single choke point where
+a command turns a user-supplied path into a validated root, and \emph{not} inside the
+library function that performs that resolution: that function is pure, returns a
+library error type, cannot prompt, and is called by multi-directory validation paths
+where a policy decision would be wrong. Second, \code{distribute} guards its
+destinations as well as its sources, since \code{--to C:\textbackslash Windows} is as damaging as
+\code{--from}; a destination that does not yet exist is judged by the nearest existing
+ancestor, which is where it would be created.
+
+Finally, \code{--include-hidden} escalates \textsf{Caution} to \textsf{Dangerous}.
+Bringing dotfiles into scope widens the blast radius into exactly the territory where
+configuration and system state live; a \textsf{Safe} directory remains \textsf{Safe},
+because hidden files in a user's own downloads directory are not a hazard.
+
+% =============================================================================
+\section{Permission determination}
+\label{sec:perm}
+
+\subsection{Empirical probing}
+
+Given the disagreements catalogued in \Cref{sec:related}, we determine writability by
+attempting it:
+
+\begin{lstlisting}
+fn probe_writable(dir: &Path) -> Option<bool> {
+    let name = format!(".tidy-up-write-test-{}-{nanos}-{unique}", process::id());
+    match fs::File::create_new(dir.join(&name)) {
+        Ok(f)  => { drop(f); let _ = fs::remove_file(dir.join(&name)); Some(true) }
+        Err(e) if e.kind() == PermissionDenied
+               || e.kind() == ReadOnlyFilesystem  => Some(false),
+        Err(_) => None,   // out of space, directory vanished: unknown, not "no"
+    }
+}
+\end{lstlisting}
+
+Three properties matter. The name is unique per process, per nanosecond and per
+monotonic counter, so concurrent runs cannot collide. \code{create\_new} fails rather
+than truncating if the name somehow exists. Most importantly, only
+\code{PermissionDenied} and \code{ReadOnlyFilesystem} produce \code{Some(false)}:
+every other error yields \code{None}, because an unknown must never be reported as an
+accusation. A test asserts exactly this for a directory that does not exist.
+
+The probe is \emph{scoped}. It runs only for commands about to write, and never under
+\code{--dry-run}. A reporting command and a dry run both promise to leave the disk
+untouched, and that promise outranks the diagnostic value of knowing writability for
+an operation that was not going to write. Two tests assert that the directory is still
+empty after a read-only assessment and after a dry-run assessment.
+
+\subsection{Ownership, and a dependency declined}
+
+Unix ownership is available cheaply, but the standard library exposes no way to read
+the current \emph{effective} user ID, so comparison requires \code{libc} or
+\code{rustix}. We shipped without ownership, retaining
+\code{Facts::owned\_by\_me: Option<bool>} so it can be supplied later without changing
+the classifier or any test. The justification is that the writability probe already
+answers the question that determines the outcome, that \code{NotOwned} is only ever
+\textsf{Caution}, and that the project's zero-dependency constraint
+(\Cref{sec:eval:deps}) is a stated property of the artifact. Should ownership prove
+necessary, \code{rustix} is preferred over \code{libc} because it is implemented in
+pure Rust on \code{linux-raw} and preserves the dependency-free static musl build.
+
+\subsection{Reporting refusals distinctly}
+
+A permission failure previously surfaced as \code{/srv/data: Permission denied
+(os error 13)} or, below the root, as the single word \enquote{unreadable}. We
+separated it throughout: a new \code{Error::Denied} variant renders as
+\code{cannot read <path>: permission denied} and permits the command layer to add an
+actionable hint, and \code{SkipReason} gained a \code{Denied} variant distinct from
+\code{Unreadable}. The difference is the difference between a user concluding
+\enquote{\tool{} is broken} and \enquote{I do not own that directory}.
+
+\subsection{Hidden and system-owned files}
+
+Three defects in hidden-file handling were found and corrected.
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.2em]
+  \item \textbf{macOS \code{UF\_HIDDEN}.} Files hidden with \code{chflags hidden}
+    carry a flag in \code{st\_flags} that no leading-dot check detects.
+    \code{std::os::macos::fs::MetadataExt::st\_flags} is stable, so this cost nothing
+    but the recognition that it was missing.
+  \item \textbf{Windows \textit{hidden} conflated with \textit{system}.} The previous
+    implementation tested the mask \code{0x2 | 0x4} as a unit, so
+    \code{--include-hidden} also un-skipped every file Windows marks as its own.
+    Asking to see dotfiles is not asking to move \code{pagefile.sys}. The attributes
+    are now tested separately, a \code{SkipReason::SystemAttribute} reports the
+    second, and it is \emph{not} governed by \code{--include-hidden}.
+  \item \textbf{Escalation.} As noted above, including hidden items raises a
+    \textsf{Caution} verdict to \textsf{Dangerous}.
+\end{enumerate}
+
+% =============================================================================
+\section{Survival architecture}
+\label{sec:survival}
+
+\subsection{Principle}
+
+A bulk operation over thousands of files will encounter a locked file, an unreadable
+directory, or a name the filesystem rejects. Aborting costs the user the entire
+remaining run; worse, it leaves the operation half-complete in a way the user did not
+choose. The principle adopted is:
+
+\begin{quote}
+\itshape
+Fail the run only when continuing would do something the user did not ask for, or
+would lose the ability to undo it. Everything else is a skip: classify it, record it,
+step over it, and report it at the end.
+\end{quote}
+
+\subsection{Failure taxonomy}
+
+A single type carries every failure, and one function classifies every I/O error, so
+that counting is consistent across modules:
+
+\begin{lstlisting}
+pub struct Problem { path: PathBuf, op: Op, cause: Cause, message: String }
+
+pub enum Cause { Denied, NotFound, InUse, Exists, CrossesDevices,
+                 NoSpace, Invalid, Panic, Other }
+\end{lstlisting}
+
+\code{Cause::of} maps \code{io::ErrorKind} to a cause in one place. Two mappings are
+worth noting. \code{ReadOnlyFilesystem} maps to \code{Denied}, because from the user's
+point of view it is a permission problem with the same remedy. Windows reports a file
+held open by another process as \code{ERROR\_SHARING\_VIOLATION} (32) or
+\code{ERROR\_LOCK\_VIOLATION} (33), neither of which has a stable
+\code{io::ErrorKind}; these are recognized by raw code and mapped to \code{InUse}, or
+every locked file would be reported as \enquote{other}.
+
+Two combinators express the principle directly:
+
+\begin{lstlisting}
+pub fn try_or_skip<T>(&mut self, path: &Path, op: Op,
+                      f: impl FnOnce() -> Result<T>) -> Option<T>;
+pub fn catch_or_skip<T>(&mut self, path: &Path, op: Op,
+                        f: impl FnOnce() -> Result<T> + UnwindSafe) -> Option<T>;
+\end{lstlisting}
+
+The second additionally contains panics via \code{catch\_unwind}, converting a bug in
+the processing of one file into a \code{Cause::Panic} problem rather than the loss of
+the entire run. A test panics inside the closure and asserts both that the problem is
+recorded with its message and that the collection remains usable afterwards.
+
+\subsection{Converting the traversal}
+
+The directory walk previously propagated \code{Result} through its recursion, so a
+failure anywhere in a large tree aborted the scan. It is now infallible below the
+root: every failure becomes a \code{Skipped} entry with a classified reason. Only the
+root itself can fail the command, which is correct, because a root that cannot be
+listed offers nothing to do.
+
+A test constructs a tree with one subdirectory at mode \code{0o000} and asserts both
+that every other file is still returned and that the failed directory is named exactly
+once with reason \code{Denied}. It self-disables when running as \code{root}, for whom
+nothing is unreadable.
+
+\subsection{The one fatal exception}
+
+Journal write failure remains fatal, and the in-flight move is rolled back. This is
+the deliberate exception to the principle: a change that cannot be recorded cannot be
+undone, and silently continuing would strand files with no way back. Stating the
+exception explicitly, and having exactly one, is what makes the rest of the policy
+legible.
+
+\subsection{Reporting}
+
+Reporting is grouped by cause with an actionable hint per group, then individual
+paths, capped unless \code{--verbose} is given:
+
+\begin{lstlisting}[style=shell]
+!  23 items could not be processed:
+   Permission denied               18  (pick a folder you own, or run as an administrator)
+   In use by another program        4  (close the programs holding these files and run again)
+   No longer there                  1  (these were deleted or renamed while tidy-up was running)
+   Downloads/locked.pdf: ...
+   ... and 13 more (use --verbose to list them all)
+\end{lstlisting}
+
+Twenty identical lines reading \enquote{permission denied} inform nobody; one line
+reading \enquote{18 permission denied, pick a folder you own} is actionable. A run
+that skipped items still exits zero, because it performed the work it could;
+\code{--strict} makes it exit non-zero for callers that need to know.
+
+% =============================================================================
+\section{Reversible re-grouping}
+\label{sec:regroup}
+
+\subsection{Motivation and interface}
+
+The pre-existing \code{organize} command sorts loose files into category directories
+and deliberately refuses to descend into its own output, scanning one level deep and
+skipping known category names. That is correct for a downloads directory and useless
+for a directory somebody organized badly years ago, which is the common real case.
+
+\code{reorganize} inverts both choices. It descends without limit, including into
+directories a previous run created, re-files every file under an ordered list of
+grouping keys, and deletes the directories it empties.
+
+\begin{lstlisting}[style=shell]
+tidy-up reorganize <path> --by year,type      # 2024/Images/photo.jpg
+tidy-up reorganize <path> --by type,ext       # Images/PNG/photo.png
+tidy-up reorganize <path> --by alpha
+\end{lstlisting}
+
+\Cref{tab:keys} lists the keys. Each becomes one level of nesting, in the order given.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Grouping keys. Every key is total: no file is left unplaced.}
+\label{tab:keys}
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+\textbf{Key} & \textbf{Example directory} & \textbf{Derivation} \\
+\midrule
+\code{type}  & \code{Images}, \code{3D Models} & shared with \code{organize}, so the
+  two commands agree \\
+\code{ext}   & \code{PDF}, \code{No extension} & upper-cased extension; the
+  \enquote{document type} grouping \\
+\code{year}  & \code{2024}, \code{Unknown date} & modification time \\
+\code{month} & \code{03-March} & numeric prefix so directories sort in calendar order \\
+\code{day}   & \code{2024-03-17} & modification time \\
+\code{size}  & \code{Small (under 10 MiB)} & five bands, powers of 1024 \\
+\code{alpha} & \code{A}, \code{0-9}, \code{Other} & first character, upper-cased \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+Totality is enforced by test: a corpus of awkward inputs --- no extension, no
+timestamp, a leading digit, an accented initial (\code{étude.mp3}), a non-Latin
+initial (\unisample{日本語.txt}{nihongo.txt}), and the name \code{...} --- is passed
+through every key, and each is asserted to produce a non-empty, already-sanitized
+name.
+
+\subsection{Name sanitization}
+
+Directory names derived from file contents can contain anything. Sanitization
+replaces the nine characters Windows rejects and all control characters, trims
+trailing dots and spaces, falls back to \code{Other} if nothing survives, and appends
+an underscore to the 22 reserved device names. The last case is not hypothetical:
+\code{driver.con} is an ordinary file name, and grouping by extension would otherwise
+attempt to create a directory named \code{CON}, which Windows will not create at any
+path.
+
+\subsection{Idempotence}
+
+\code{organize} obtains idempotence from its skip list. \code{reorganize} has no skip
+list and must compute it: for each file, the destination is derived, and if it equals
+the current path no move is recorded. A move from a path to itself would otherwise
+churn the journal on every run and never converge.
+
+The property is asserted twice, at two levels. A unit test feeds the destinations of
+one plan back in as the input of a second and asserts the second plan is empty. An
+integration test runs the compiled binary twice over a fixture and asserts that the
+second run reports nothing to do and that the file and directory listings are
+byte-identical.
+
+\subsection{Computing emptied directories}
+
+\Cref{alg:emptied} computes which directories the run will leave empty. The subtlety
+is that emptiness is transitive upward --- a directory containing only directories that
+become empty is itself empty --- while any retained item disqualifies a directory
+\emph{and all of its ancestors}.
+
+\begin{algorithm}[t]
+\SetAlgoLined
+\DontPrintSemicolon
+\KwIn{root $r$; $V$ = parents of moved items; $K$ = ancestors of retained items}
+\KwOut{directories to remove, deepest first}
+$C \leftarrow \emptyset$\;
+\ForEach{$d \in V$}{
+  \While{$d \neq r$ \textbf{and} $d$ is under $r$}{
+    $C \leftarrow C \cup \{d\}$; \quad $d \leftarrow \mathrm{parent}(d)$\;
+  }
+}
+$C \leftarrow C \setminus K$ \tcp*{anything holding a survivor, and its ancestors}
+$C \leftarrow C \setminus \{d : d \text{ is or is under } r/\texttt{.tidy-up}\}$\;
+sort $C$ by component count, descending\;
+\Return $C$\;
+\caption{\textsc{EmptiedDirectories}}
+\label{alg:emptied}
+\end{algorithm}
+
+Items are \emph{retained} when they are skipped by an ignore rule, are unreadable,
+are symbolic links, or are code project directories that policy keeps in place. The
+tool's own \code{.tidy-up} state directory is excluded unconditionally: it holds the
+undo journals, and a run that swept away its own means of reversal would be
+self-defeating.
+
+Two safety layers back the computation. Directories are removed deepest first, and
+removal uses \code{remove\_dir}, which succeeds only on a genuinely empty directory.
+An error in \Cref{alg:emptied} therefore produces a directory that is not removed,
+never one that is removed with contents. Consistent with \Cref{sec:survival}, a
+removal that fails is recorded as a problem and the run continues.
+
+\subsection{Undo}
+\label{sec:regroup:undo}
+
+Reversing a re-grouping requires more than replaying moves. Files whose parent
+directories vanished are restored correctly by side effect, since the move primitive
+creates destination parents. Directories that ended up holding \emph{nothing} have no
+move to recreate them and would be silently lost.
+
+The journal therefore gained one record type:
+
+\begin{lstlisting}
+DirRemoved { path: PathBuf }   // relative to the root, like every other record
+\end{lstlisting}
+
+written after each successful removal --- after, so that a removal which did not
+happen is never recorded. Restore replays records in reverse, which places directory
+recreation before the moves that repopulate the subtree.
+
+The property is asserted end to end. An integration test constructs a deliberately
+badly organized tree --- nested category directories, a \code{\_Duplicates} directory,
+a code project, a dotfile, and an already-empty directory --- reorganizes it by
+\code{year,type}, then restores, and asserts that both the complete file map (relative
+path to contents) and the complete directory listing equal their original values. The
+empty directory is in the fixture specifically because it is the case the journal
+could not previously express.
+
+\subsection{Time zones: a stated limitation}
+
+Date grouping requires civil dates, and the Rust standard library has no time-zone
+interface. Obtaining the local UTC offset portably would require a TZif parser plus
+\code{/etc/localtime} on Unix and a registry read on Windows --- in practice, a
+dependency.
+
+Rather than be correct on one platform and silently wrong on another, dates are UTC,
+and an environment variable \code{TIDY\_UP\_UTC\_OFFSET} accepting \code{+03:00},
+\code{-0530}, \code{+7} or \code{Z} applies an offset. The consequence is real and
+documented: with no offset set, a file modified at 01:00 local time in UTC+3 on
+1 January is grouped under the previous year. A test states exactly this case in both
+configurations. We consider a documented, correctable limitation preferable to an
+undocumented platform-dependent one, and note that the effect is confined to a small
+fraction of files near boundaries and is fully reversible.
+
+% =============================================================================
+\section{Observability}
+\label{sec:obs}
+
+\subsection{What the journal already provides}
+
+An important negative design decision: the run log is \emph{not} a per-move log,
+because one already exists. The undo journal records every move as it happens,
+unbuffered, so that a crash leaves a usable record. Duplicating it would double the
+writes to say the same thing twice.
+
+What a journal of moves cannot record is everything that did \emph{not} happen: the
+safety verdict, what was skipped and why, what failed, and how long each stage took.
+That is the gap the run log fills, and the two artifacts join on a shared identifier.
+
+\subsection{Format and policy}
+
+Events are buffered and written once, at the end of the run, to
+\code{<root>/.tidy-up/logs/<run-id>.jsonl}, beside the journal. Buffering is
+acceptable precisely because the journal is the crash-safe record: a run log missing
+after a crash costs a diagnosis, not data. A complete log from a real run:
+
+\begin{lstlisting}[style=shell]
+{"type":"run","command":"reorganize","version":"0.1.1","os":"windows","format":1,...}
+{"type":"safety","path":"...\\logdemo","risk":"safe","reasons":[],"allowed":false}
+{"type":"scan","root":"...","files":2,"bytes":3,"projects":0,"skipped":{},"ms":0}
+{"type":"plan","operation":"reorganize","moves":2,"bytes":3}
+{"type":"execute","journal_id":"20260928-204156","moved":2,"bytes":3,
+ "dirs_removed":2,"failed":0,"ms":0}
+{"type":"end","status":"ok","ms":4,"metrics":{"roots":1,"files_scanned":2,
+ "bytes_scanned":3,"skipped":0,"planned_moves":2,"moved":2,"bytes_moved":3,
+ "dirs_removed":2,"failed":0,"denied":0}}
+\end{lstlisting}
+
+Events are a closed Rust enum serialized with an internal tag, which makes the log a
+type-checked, versioned contract rather than a collection of stringly-typed fields
+that a typo can silently rename --- the same property the journal format already has.
+\code{status} distinguishes \code{ok}, \code{error}, \code{cancelled} and
+\code{blocked}, the last recording a guard refusal.
+
+Logging is off by default, enabled by \code{--log} or \code{TIDY\_UP\_LOG}, preserving
+the project's documented promise to write nothing the user did not ask for. Logs are
+pruned to the newest twenty per directory; journals, which are undo data, are never
+touched by pruning, and a test asserts this by placing a non-log file in the directory
+and verifying it survives. A log that cannot be written degrades silently: a
+diagnostic must never change a run's outcome or exit code, and a test asserts that a
+run whose log directory path is occupied by a regular file still succeeds.
+
+\subsection{A conceded trade-off}
+
+The sink is process-level rather than threaded through the call graph. A
+command-line tool performs exactly one run per process, and threading a handle through
+nine commands to record six events would have cost more in noise and merge risk than
+it returned. The cost is that tests of the sink exercise it directly or through the
+compiled binary rather than in parallel against isolated instances. We consider this
+the right trade at this scale and would revisit it if the library were embedded.
+
+% =============================================================================
+\section{Evaluation}
+\label{sec:eval}
+
+\subsection{Method}
+
+Evaluation is by automated test, at three levels: pure unit tests of the classifier
+and planners, host-dependent unit tests of the probes, and black-box integration tests
+that execute the compiled binary. All figures below are from a full
+\code{cargo test} run on Windows 11 with Rust 1.95.0. \Cref{tab:tests} gives the
+counts.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Test suite. 350 tests, zero failures, zero \code{clippy} warnings at
+\code{--all-targets}.}
+\label{tab:tests}
+\begin{tabularx}{\textwidth}{@{}l r X@{}}
+\toprule
+\textbf{Suite} & \textbf{Tests} & \textbf{Scope} \\
+\midrule
+unit (in-crate)        & 256 & classifier corpus, probes, planners, taxonomy, log format \\
+\code{tests/cli}       & 30  & pre-existing command-line behaviour (regression) \\
+\code{tests/workflow}  & 23  & scan $\rightarrow$ plan $\rightarrow$ execute $\rightarrow$ journal $\rightarrow$ restore \\
+\code{tests/reorganize}& 11  & re-grouping, idempotence, undo round trip \\
+\code{tests/safety}    & 10  & guard policy through the compiled binary \\
+\code{tests/logging}   & 7   & run log content, joins, degradation, \code{--strict} \\
+\code{tests/cross\_volume} & 5 & cross-partition moves (environment-gated) \\
+\code{tests/scripts}   & 3   & installer scripts \\
+doc-tests              & 5   & every documented example compiles and runs \\
+\midrule
+\textbf{Total}         & \textbf{350} & \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Cross-platform rule validation}
+
+Because \code{Platform} is a parameter, the full rule corpus runs on every host. The
+table-driven suite covers Windows dangerous locations and safe locations, scrubbed and
+redirected environment variables, case and separator variants, macOS dangerous
+locations and all five carve-outs, and Linux dangerous locations and carve-outs, each
+case carrying a one-line justification that is printed on failure. This is the concrete
+payoff of P3: the macOS \code{/System/Volumes/Data} carve-out and the Linux
+\code{/run/media} carve-out --- the two most consequential and most easily forgotten
+--- are verified on a Windows development machine, where neither path exists.
+
+\subsection{Precision: the negative corpus}
+
+P2 is tested directly by \code{ordinary\_folders\_are\_never\_flagged}, which asserts
+\textsf{Safe} for 24 ordinary directories spanning all three platforms:
+\code{C:\textbackslash Users\textbackslash me\textbackslash Downloads}, \code{D:\textbackslash Media\textbackslash Movies},
+\code{\textbackslash\textbackslash nas\textbackslash media\textbackslash Photos}, \code{/Users/me/Documents/Work},
+\code{/Volumes/Backup/Photos}, \code{/home/me/Pictures/2024}, \code{/mnt/storage},
+\code{/media/me/Elements}, \code{/data/archive}, \code{/tmp/scratch} and others. The
+test exists as a regression net: a future rule that increases coverage at the expense
+of precision fails it, and the failure names the directory that regressed.
+
+\subsection{Guard behaviour}
+
+Ten integration tests drive the compiled binary with no terminal attached, the
+condition that matters for scripts and CI. The most significant assert that
+\code{organize <home> --yes} exits non-zero, names the override flag, and leaves the
+home directory listing unchanged; that the override alone still cannot run unattended;
+that \code{--dry-run} on a flagged directory warns, proceeds and creates no state; that
+reporting commands are never blocked; that \code{distribute} guards destinations; and
+that \emph{every} destructive command refuses the home directory --- the last written
+as a loop over the command set so that a newly added command without a guard fails the
+suite. A complementary test asserts that reporting commands are the exception, so the
+first cannot be satisfied by blocking everything.
+
+Manual verification on the development machine confirmed the intended behaviour
+against real system directories:
+
+\begin{lstlisting}[style=shell]
+$ tidy-up organize 'C:\Windows' --yes
+Careful
+! C:\Windows is a folder the system manages.
+  It holds the Windows installation, which other programs expect to find in place.
+  tidy-up cannot write here, so nothing could be moved.
+error: refusing to change C:\Windows: tidy-up cannot write there, and
+       --allow-system-folder cannot grant permission the system refused
+$ echo $?
+1
+\end{lstlisting}
+
+Note that \code{C:\textbackslash Windows} is refused on two independent grounds --- the name rule
+and the writability probe --- and that the message correctly reports the override as
+unhelpful, since the binding constraint is permission rather than policy.
+
+\subsection{Reversibility}
+
+The re-grouping round trip is asserted as equality of two complete observations of the
+tree, before and after, excluding only the tool's own state directory: a map from
+relative path to file contents, and a sorted list of relative directory paths. Testing
+directory structure separately from file contents is what gives the test power over
+the \code{DirRemoved} record; a files-only comparison would pass even if every empty
+directory were lost.
+
+\subsection{Dependency footprint}
+\label{sec:eval:deps}
+
+\begin{table}[t]
+\centering
+\small
+\caption{Dependency footprint before and after this work.}
+\label{tab:deps}
+\begin{tabular}{@{}l r r@{}}
+\toprule
+ & \textbf{Before} & \textbf{After} \\
+\midrule
+Direct dependencies            & 10 & 10 \\
+Unique transitive crates       & 54 & 54 \\
+Stripped release binary        & 2.19\,MiB & 2.24\,MiB \\
+New dependencies added         & \multicolumn{2}{c}{0} \\
+Lines added (implementation + tests) & \multicolumn{2}{c}{5{,}633} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Zero new dependencies was a hard constraint, and it shaped four decisions that would
+otherwise have gone differently:
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.2em]
+  \item \textbf{Logging} is hand-rolled on the already-present \code{serde}, not
+    \code{tracing} with \code{tracing-subscriber}. The ecosystem option would have
+    added roughly a dozen transitive crates, dominated by \code{regex-automata} via
+    \code{EnvFilter}, for dynamic filtering and asynchronous span propagation that a
+    single-threaded tool with one process-wide span does not use. The closed event
+    enum is, additionally, a better contract than stringly-typed fields.
+  \item \textbf{Ownership checks} were dropped rather than take \code{libc} or
+    \code{rustix} (\Cref{sec:perm}).
+  \item \textbf{Local time} was declined rather than take a date crate
+    (\Cref{sec:regroup}).
+  \item \textbf{Platform attributes} use stable \code{std::os::*::fs::MetadataExt}
+    interfaces --- \code{file\_attributes} on Windows, \code{st\_flags} on macOS,
+    \code{dev} on Unix --- rather than \code{windows-sys}.
+\end{enumerate}
+
+We report items 2 and 3 as genuine reductions in capability accepted in exchange for a
+stated property of the artifact, not as free wins.
+
+\subsection{Defects found by the work itself}
+
+Three pre-existing defects surfaced while implementing the above and are worth
+recording, since each is a plausible bug in comparable tools:
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.2em]
+  \item \code{--include-hidden} un-skipped Windows \textsc{system}-attributed files
+    along with hidden ones, because the two attributes were tested as one mask.
+  \item The directory walk aborted an entire scan on any failure below the root.
+  \item Permission denial below the root was reported as the undifferentiated word
+    \enquote{unreadable}, discarding the error kind.
+\end{enumerate}
+
+A fourth defect was introduced and caught by the new tests rather than by review: the
+first integration test for \code{distribute} destination guarding failed because the
+sandbox directory lies inside the home directory on Windows, so the pre-existing
+overlap check rejected the pair before the guard was reached. The test was correct and
+the fixture was wrong, which is the desirable ordering.
+
+% =============================================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Threats to validity}
+
+\textbf{Platform coverage of the probes.} Rule tables are validated on every host, but
+the probe implementations are inherently platform-specific and were executed only on
+Windows during development. Continuous integration runs the suite on all three
+platforms; the macOS \code{st\_flags} path and the Linux \code{mountinfo} live-read
+path have not been exercised by the author directly. The \code{mountinfo} \emph{parser}
+is tested against fixtures on every host, which isolates the untested surface to the
+file read itself.
+
+\textbf{Soundness is empirical, not proved.} P1 is a claim about a hand-maintained
+table, not a theorem. New operating system releases introduce directories; the mitigation
+is the layered composition of name rules, environment variables, runtime attributes and
+the writability probe, such that a path missing from the table is often still caught by
+a fact. We make no completeness claim.
+
+\textbf{Precision is measured against a curated corpus.} The 24-directory negative
+corpus reflects the author's judgement about what is ordinary. A field study of real
+invocations would be a stronger instrument and was not conducted.
+
+\textbf{Time-of-check-to-time-of-use.} The classifier judges a directory that could in
+principle be replaced before the operation proceeds. We consider this acceptable: the
+guard defends against user error, not against a local adversary who could simply run
+the tool themselves.
+
+\subsection{Generality}
+
+The mechanisms are not specific to file organizers. The pure-classifier-plus-facts
+structure applies to any tool that must judge a target before acting on it; the
+platform-as-parameter technique applies to any cross-platform path logic and is, we
+think, underused; the survival taxonomy with one stated fatal exception applies to any
+bulk operation; and the observation that a move journal cannot express directory
+deletion applies to any reversible operation that removes containers.
+
+\subsection{Future work}
+
+Four directions follow directly. Effective-UID comparison via \code{rustix} would
+complete the ownership signal at the cost of one pure-Rust dependency. A TZif parser
+would remove the time-zone limitation without a date crate. Per-move instrumentation
+could be added by way of an observer trait on the executor, which was designed but not
+implemented, on the grounds that the journal already carries the same information.
+Finally, the negative corpus should be extended empirically rather than by judgement,
+which would require telemetry the tool deliberately does not collect --- an instructive
+tension between measurement and the project's privacy stance.
+
+% =============================================================================
+\section{Conclusion}
+\label{sec:conclusion}
+
+Bulk file reorganization is a category of tool whose core mechanism is indifferent to
+the value of what it operates on. We have described a guard that closes that gap
+across Windows, macOS and Linux, built around a pure classifier whose platform is an
+argument, so that all three rule tables are validated from any host; an empirical
+writability probe that is correct where mode bits, ACLs and System Integrity
+Protection disagree; a survival architecture with exactly one stated fatal exception;
+and an idempotent re-grouping operation whose undo restores directory structure, not
+merely file locations.
+
+Two lessons generalize beyond the artifact. The first is that precision is a safety
+property: a guard that fires on \code{D:\textbackslash Downloads} teaches users to bypass
+it and protects nobody, which is why two plausible rules were deliberately weakened and
+why a negative corpus is part of the test suite rather than an afterthought. The second
+is that separating a pure verdict from an impure policy is what made the work testable
+at all --- and that the same separation forced the discovery, in the Rust standard
+library, that \code{std::path} cannot be used to reason about another platform's paths.
+
+The implementation is 5{,}633 lines, adds no dependencies, and passes 350 tests.
+
+% =============================================================================
+\section*{Availability}
+\addcontentsline{toc}{section}{Availability}
+
+The implementation is open source at
+\url{https://github.com/ianktoo/tidy-up}, released under the MIT licence together with
+a supplementary end-user licence. The modules described here are \code{src/safety.rs},
+\code{src/outcome.rs}, \code{src/regroup.rs}, \code{src/obs.rs} and
+\code{src/commands/guard.rs}, with tests in the corresponding \code{*\_tests.rs} files
+and in \code{tests/}.
+
+\section*{Acknowledgements}
+\addcontentsline{toc}{section}{Acknowledgements}
+
+Portions of the implementation and this manuscript were prepared with the assistance
+of an AI coding assistant; all design decisions, trade-offs and the final text are the
+author's own.
+
+% =============================================================================
+\begin{thebibliography}{99}
+\addcontentsline{toc}{section}{References}
+\small
+
+\bibitem{posix}
+IEEE and The Open Group.
+\newblock \emph{The Open Group Base Specifications Issue 7, 2018 edition (POSIX.1-2017)}.
+\newblock IEEE Std 1003.1-2017. See in particular \code{access()} and
+  \code{faccessat()}.
+
+\bibitem{linuxman}
+M.~Kerrisk.
+\newblock \emph{The Linux Programming Interface}.
+\newblock No Starch Press, 2010.
+
+\bibitem{procfs}
+Linux kernel documentation.
+\newblock \emph{proc(5) --- process information pseudo-filesystem}.
+\newblock Describes the \code{/proc/[pid]/mountinfo} format, including octal escaping
+  of mount points and the optional-field separator.
+
+\bibitem{fhs}
+Linux Foundation.
+\newblock \emph{Filesystem Hierarchy Standard, Version 3.0}, 2015.
+
+\bibitem{sip}
+Apple Inc.
+\newblock \emph{System Integrity Protection Guide}.
+\newblock Apple Developer Documentation.
+
+\bibitem{apfs}
+Apple Inc.
+\newblock \emph{Apple File System Reference}.
+\newblock Apple Developer Documentation. Describes firmlinks and the split
+  System/Data volume layout.
+
+\bibitem{msdnpaths}
+Microsoft Corporation.
+\newblock \emph{Naming Files, Paths, and Namespaces}.
+\newblock Windows Application Development Documentation. Covers reserved device names,
+  trailing dot and space handling, and the \code{\textbackslash\textbackslash?\textbackslash} prefix.
+
+\bibitem{msdnattr}
+Microsoft Corporation.
+\newblock \emph{File Attribute Constants}.
+\newblock Windows Application Development Documentation.
+
+\bibitem{knownfolders}
+Microsoft Corporation.
+\newblock \emph{Known Folders and the \code{KNOWNFOLDERID} constants}.
+\newblock Windows Application Development Documentation.
+
+\bibitem{coreutils}
+GNU Project.
+\newblock \emph{GNU Coreutils Manual}.
+\newblock See \code{rm} and the \code{--preserve-root} option.
+
+\bibitem{hinnant}
+H.~Hinnant.
+\newblock \emph{\code{chrono}-Compatible Low-Level Date Algorithms}.
+\newblock Describes the \code{civil\_from\_days} algorithm used for date conversion.
+
+\bibitem{rustdoc}
+The Rust Project Developers.
+\newblock \emph{The Rust Standard Library Documentation}.
+\newblock See \code{std::path}, \code{std::io::ErrorKind}, and the platform
+  \code{MetadataExt} extension traits.
+
+\bibitem{tidyup}
+I.~Too.
+\newblock \emph{tidy-up: organize messy folders by file type, isolate duplicates, and
+  undo it all}.
+\newblock \url{https://github.com/ianktoo/tidy-up}.
+
+\end{thebibliography}
+
+\end{document}
