@@ -91,7 +91,13 @@ fn a_dry_run_on_a_dangerous_folder_warns_and_proceeds() {
     let text = all_output(&out);
     assert!(out.status.success(), "{text}");
     assert!(text.contains("Careful"), "{text}");
-    assert!(text.contains("Dry run"), "{text}");
+    // It got past the guard and into the command. Which of the two endings it
+    // reaches depends on whether this home directory happens to hold loose
+    // files, which is not what this test is about: a CI runner's does not.
+    assert!(
+        text.contains("Dry run") || text.contains("already tidy"),
+        "the run should have proceeded past the guard:\n{text}"
+    );
     assert!(
         !home.join(".tidy-up").exists(),
         "a dry run must not create state"
