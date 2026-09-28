@@ -197,9 +197,9 @@ cannot be undone. Fourth, an \emph{idempotent re-grouping algorithm} that unpack
 arbitrarily nested directory tree and re-files it under an ordered list of grouping
 keys, computes which directories the operation will empty, and records their removal
 so that undo restores the original tree exactly, including directories that held
-nothing. The implementation adds 5{,}726 lines across nine modules and introduces
+nothing. The implementation adds 6{,}195 lines across ten modules and introduces
 \emph{zero} new dependencies, keeping the transitive dependency count at 54 crates.
-An evaluation over 353 automated tests reports the properties each mechanism is
+An evaluation over 363 automated tests reports the properties each mechanism is
 designed to guarantee, including a byte-for-byte reorganize/undo round trip and the
 non-overridability of a genuine permission wall.
 \\[0.6em]
@@ -388,7 +388,9 @@ act & \code{executor} & perform a plan & 250 \\
 remember & \code{journal} & append-only undo log & 461 \\
  & \code{restore} & reverse a journal & 315 \\
 \midrule
-observe\,$^\dagger$ & \code{obs} & JSON Lines run record & 595 \\
+observe\,$^\dagger$ & \code{obs} & JSON Lines run record & 608 \\
+\midrule
+present\,$^\dagger$ & \code{commands::session} & menu-settable equivalents of the flags & 371 \\
 \midrule
 present & \code{cli}, \code{commands}, \code{ui} & arguments, flows, terminal & 1{,}700 \\
 \bottomrule
@@ -733,6 +735,34 @@ Finally, \code{--include-hidden} escalates \textsf{Caution} to \textsf{Dangerous
 Bringing dotfiles into scope widens the blast radius into exactly the territory where
 configuration and system state live; a \textsf{Safe} directory remains \textsf{Safe},
 because hidden files in a user's own downloads directory are not a hazard.
+
+\subsection{Reaching the override without a command line}
+\label{sec:detect:menu}
+
+An escape hatch that cannot be reached is not an escape hatch. \Cref{tab:policy}
+promises that a determined user can proceed (P4), but the promise is carried entirely
+by a command-line flag, and the tool is also usable by running it with no arguments,
+which starts a menu. Someone who launched it by double-clicking has nowhere to put a
+flag. For them, P4 did not hold: not only was the override unreachable, so were
+preview mode, hidden-file inclusion and every ignore rule, because the menu
+constructed each command with default arguments.
+
+This is easy to miss when the guard is designed, tested and demonstrated from a
+shell. The fix is a settings screen holding the same options for the duration of the
+session, with whatever is not at its default printed above the menu so the next
+action is never a surprise. Nothing is persisted: the tool writes no configuration
+file outside the folders it processes, and that property was worth more than
+remembering a preference between runs.
+
+Two details preserve the policy rather than route around it. Enabling the override
+asks for confirmation, and the guard still asks again before acting, so it remains
+two deliberate steps rather than one sticky setting. And \enquote{skip
+confirmations}, the menu equivalent of \code{--yes}, is deliberately absent: in an
+interactive session the confirmation \emph{is} the review step, and there is no
+script waiting on it.
+
+The general point is that a safety mechanism has to be evaluated against every way
+the program can be started, not only the one its author uses.
 
 % =============================================================================
 \section{Permission determination}
@@ -1128,24 +1158,24 @@ counts.
 \begin{table}[t]
 \centering
 \small
-\caption{Test suite. 353 tests, zero failures, zero \code{clippy} warnings at
+\caption{Test suite. 363 tests, zero failures, zero \code{clippy} warnings at
 \code{--all-targets}, on both stable Rust and the declared minimum of 1.85.}
 \label{tab:tests}
 \begin{tabularx}{\textwidth}{@{}l r X@{}}
 \toprule
 \textbf{Suite} & \textbf{Tests} & \textbf{Scope} \\
 \midrule
-unit (in-crate)        & 259 & classifier corpus, probes, planners, taxonomy, log format \\
+unit (in-crate)        & 268 & classifier corpus, probes, planners, taxonomy, log format, menu options \\
 \code{tests/cli}       & 30  & pre-existing command-line behaviour (regression) \\
 \code{tests/workflow}  & 23  & scan $\rightarrow$ plan $\rightarrow$ execute $\rightarrow$ journal $\rightarrow$ restore \\
 \code{tests/reorganize}& 11  & re-grouping, idempotence, undo round trip \\
-\code{tests/safety}    & 10  & guard policy through the compiled binary \\
+\code{tests/safety}    & 11  & guard policy through the compiled binary \\
 \code{tests/logging}   & 7   & run log content, joins, degradation, \code{--strict} \\
 \code{tests/cross\_volume} & 5 & cross-partition moves (environment-gated) \\
 \code{tests/scripts}   & 3   & installer scripts \\
 doc-tests              & 5   & every documented example compiles and runs \\
 \midrule
-\textbf{Total}         & \textbf{353} & \\
+\textbf{Total}         & \textbf{363} & \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -1229,7 +1259,7 @@ Direct dependencies            & 10 & 10 \\
 Unique transitive crates       & 54 & 54 \\
 Stripped release binary        & 2.19\,MiB & 2.24\,MiB \\
 New dependencies added         & \multicolumn{2}{c}{0} \\
-Lines added (implementation + tests) & \multicolumn{2}{c}{5{,}726} \\
+Lines added (implementation + tests) & \multicolumn{2}{c}{6{,}195} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1394,7 +1424,7 @@ is that separating a pure verdict from an impure policy is what made the work te
 at all --- and that the same separation forced the discovery, in the Rust standard
 library, that \code{std::path} cannot be used to reason about another platform's paths.
 
-The implementation is 5{,}726 lines, adds no dependencies, and passes 353 tests.
+The implementation is 6{,}195 lines, adds no dependencies, and passes 363 tests.
 
 % =============================================================================
 \section*{Availability}

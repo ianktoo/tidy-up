@@ -9,6 +9,7 @@ pub mod interactive;
 pub mod organize;
 pub mod reorganize;
 pub mod restore;
+pub mod session;
 
 use std::path::Path;
 

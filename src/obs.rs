@@ -260,22 +260,35 @@ fn sink() -> Option<std::sync::MutexGuard<'static, Sink>> {
 /// call from a test.
 pub fn start(command: &str, enabled: bool) {
     let enabled = enabled || std::env::var_os(LOG_VAR).is_some_and(|v| v != "0" && !v.is_empty());
-    let sink = Sink {
-        enabled,
-        id: compact_id(now_secs()),
-        started: Instant::now(),
-        events: Vec::new(),
-        metrics: RunMetrics::default(),
-        root: None,
-    };
-    let _ = SINK.set(Mutex::new(sink));
-    event(Event::Run {
+    // The header is buffered whether or not logging is on, because the
+    // interactive menu can turn it on later and a log whose first line is not
+    // the header is not the format this module documents. One event is free.
+    let header = Event::Run {
         command: command.to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         os: std::env::consts::OS.to_string(),
         format: FORMAT_VERSION,
         started_at: now_secs(),
-    });
+    };
+    let _ = SINK.set(Mutex::new(Sink {
+        enabled,
+        id: compact_id(now_secs()),
+        started: Instant::now(),
+        events: vec![header],
+        metrics: RunMetrics::default(),
+        root: None,
+    }));
+}
+
+/// Turns recording on or off after the run has started.
+///
+/// The interactive menu has no command line to carry `--log`, so it needs a way
+/// to change its mind. Events already buffered are kept: turning logging on
+/// mid-session records the rest of the session, not a rewritten history.
+pub fn set_enabled(enabled: bool) {
+    if let Some(mut sink) = sink() {
+        sink.enabled = enabled;
+    }
 }
 
 /// Whether anything is being recorded, so callers can skip expensive formatting.
