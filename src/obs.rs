@@ -278,6 +278,17 @@ pub fn start(command: &str, enabled: bool) {
     });
 }
 
+/// Turns recording on or off after the run has started.
+///
+/// The interactive menu has no command line to carry `--log`, so it needs a way
+/// to change its mind. Events already buffered are kept: turning logging on
+/// mid-session records the rest of the session, not a rewritten history.
+pub fn set_enabled(enabled: bool) {
+    if let Some(mut sink) = sink() {
+        sink.enabled = enabled;
+    }
+}
+
 /// Whether anything is being recorded, so callers can skip expensive formatting.
 pub fn enabled() -> bool {
     sink().is_some_and(|s| s.enabled)

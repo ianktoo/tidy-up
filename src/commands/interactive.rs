@@ -7,15 +7,17 @@ use dialoguer::{Confirm, Input, Select};
 
 use crate::{
     cli::{
-        AnalyzeArgs, CompareArgs, DedupeArgs, DistributeArgs, FilterArgs, HistoryArgs,
-        OrganizeArgs, PurgeArgs, ReorganizeArgs, SafetyArgs,
+        AnalyzeArgs, CompareArgs, DedupeArgs, DistributeArgs, HistoryArgs, OrganizeArgs, PurgeArgs,
+        ReorganizeArgs,
     },
-    commands::{analyze, compare, dedupe, distribute, organize, reorganize, restore},
+    commands::{
+        analyze, compare, dedupe, distribute, organize, reorganize, restore,
+        session::{Session, split_list},
+    },
     disk::{parse_percent, parse_size},
     distribute::{Granularity, Layout, Prefer, StrategyKind},
     fsops::resolve_root,
     journal::Journal,
-    plan::ProjectPolicy,
     regroup::GroupBy,
     restore::ConflictPolicy,
     ui,
@@ -24,7 +26,7 @@ use crate::{
 /// Folder depth used when the user opts to include sub-folders.
 const SUBFOLDER_DEPTH: u32 = 4;
 
-const MENU: [&str; 11] = [
+const MENU: [&str; 12] = [
     "Organize by file type",
     "Re-file a badly organized folder (reorganize)",
     "Find duplicates and isolate them for review",
@@ -35,6 +37,7 @@ const MENU: [&str; 11] = [
     "Show history",
     "Delete isolated duplicates for good",
     "Choose a different folder",
+    "Change options",
     "Quit",
 ];
 
@@ -45,33 +48,36 @@ pub fn run() -> Result<()> {
         bail!("no command given and no interactive terminal available; see `tidy-up --help`");
     }
     let mut root = choose_folder()?;
+    let mut session = Session::default();
     loop {
         println!();
+        session.show();
         let pick = Select::new()
             .with_prompt(format!("What would you like to do in {}?", root.display()))
             .items(&MENU)
             .default(0)
             .interact()?;
         let outcome = match pick {
-            0 => organize_flow(&root),
-            1 => reorganize_flow(&root),
-            2 => dedupe_flow(&root),
-            3 => compare_flow(&root),
+            0 => organize_flow(&root, &session),
+            1 => reorganize_flow(&root, &session),
+            2 => dedupe_flow(&root, &session),
+            3 => compare_flow(&root, &session),
             4 => analyze::run(&AnalyzeArgs {
                 paths: vec![root.clone()],
                 top: 10,
                 json: false,
                 duplicates: false,
             }),
-            5 => distribute_flow(&root),
-            6 => restore_flow(&root),
+            5 => distribute_flow(&root, &session),
+            6 => restore_flow(&root, &session),
             7 => restore::history(&HistoryArgs { path: root.clone() }),
             8 => dedupe::purge(&PurgeArgs {
                 path: root.to_path_buf(),
-                safety: SafetyArgs::default(),
+                safety: session.safety.clone(),
                 yes: false,
             }),
             9 => choose_folder().map(|new_root| root = new_root),
+            10 => session.edit(),
             _ => return Ok(()),
         };
         if let Err(err) = outcome {
@@ -114,41 +120,37 @@ fn choose_folder() -> Result<PathBuf> {
     Ok(resolve_root(&path)?)
 }
 
-fn organize_flow(root: &Path) -> Result<()> {
-    let ignore_ext: String = Input::new()
-        .with_prompt("File extensions to leave alone (comma-separated, blank for none)")
-        .allow_empty(true)
-        .interact_text()?;
-    let include_shortcuts = Confirm::new()
-        .with_prompt("Also organize shortcuts (.lnk, .url)?")
-        .default(false)
-        .interact()?;
-    let subfolders = Confirm::new()
-        .with_prompt("Also sort files inside sub-folders?")
-        .default(false)
-        .interact()?;
-    let move_projects = Confirm::new()
-        .with_prompt("Gather detected code/git projects into a Projects folder?")
-        .default(false)
-        .interact()?;
+/// Asks only what is specific to this run; everything else comes from the
+/// options the user set in the menu.
+fn organize_flow(root: &Path, session: &Session) -> Result<()> {
+    let mut filter = session.filter.clone();
+    if filter.ignore_ext.is_empty() {
+        let answer: String = Input::new()
+            .with_prompt("File extensions to leave alone (comma-separated, blank for none)")
+            .allow_empty(true)
+            .interact_text()?;
+        filter.ignore_ext = split_list(&answer);
+    }
+    let depth = match session.depth {
+        Some(depth) => depth,
+        None => {
+            let subfolders = Confirm::new()
+                .with_prompt("Also sort files inside sub-folders?")
+                .default(false)
+                .interact()?;
+            if subfolders { SUBFOLDER_DEPTH } else { 1 }
+        }
+    };
 
     organize::run(&OrganizeArgs {
         path: root.to_path_buf(),
-        safety: SafetyArgs::default(),
-        filter: FilterArgs {
-            ignore_ext: ignore_ext.split(',').map(str::to_owned).collect(),
-            include_shortcuts,
-            ..Default::default()
-        },
-        depth: if subfolders { SUBFOLDER_DEPTH } else { 1 },
-        projects: if move_projects {
-            ProjectPolicy::Move
-        } else {
-            ProjectPolicy::Keep
-        },
-        dry_run: false,
+        safety: session.safety.clone(),
+        filter,
+        depth,
+        projects: session.projects,
+        dry_run: session.dry_run,
         yes: false,
-        verbose: false,
+        verbose: session.verbose,
     })
 }
 
@@ -156,7 +158,7 @@ fn organize_flow(root: &Path) -> Result<()> {
 ///
 /// The menu never sets `--allow-system-folder`. If someone points it at a system
 /// folder, the right answer is the refusal that names the flag.
-fn reorganize_flow(root: &Path) -> Result<()> {
+fn reorganize_flow(root: &Path, session: &Session) -> Result<()> {
     const CHOICES: [(&str, &[GroupBy]); 6] = [
         ("By file type", &[GroupBy::Type]),
         ("By year", &[GroupBy::Year]),
@@ -174,40 +176,43 @@ fn reorganize_flow(root: &Path) -> Result<()> {
         .items(&labels)
         .default(0)
         .interact()?;
-    let preview = Confirm::new()
-        .with_prompt("Show the plan first, without changing anything?")
-        .default(true)
-        .interact()?;
+    // This one moves far more than the others, so it offers the preview even
+    // when the session has not asked for one.
+    let preview = session.dry_run
+        || Confirm::new()
+            .with_prompt("Show the plan first, without changing anything?")
+            .default(true)
+            .interact()?;
 
     reorganize::run(&ReorganizeArgs {
         path: root.to_path_buf(),
         by: CHOICES[pick].1.to_vec(),
-        filter: FilterArgs::default(),
-        safety: SafetyArgs::default(),
-        depth: None,
+        filter: session.filter.clone(),
+        safety: session.safety.clone(),
+        depth: session.depth,
         keep_empty_dirs: false,
-        projects: ProjectPolicy::Keep,
+        projects: session.projects,
         dry_run: preview,
         yes: false,
-        verbose: false,
+        verbose: session.verbose,
     })
 }
 
-fn dedupe_flow(root: &Path) -> Result<()> {
+fn dedupe_flow(root: &Path, session: &Session) -> Result<()> {
     dedupe::run(&DedupeArgs {
         path: root.to_path_buf(),
-        safety: SafetyArgs::default(),
-        filter: FilterArgs::default(),
-        depth: None,
-        dry_run: false,
+        safety: session.safety.clone(),
+        filter: session.filter.clone(),
+        depth: session.depth,
+        dry_run: session.dry_run,
         yes: false,
-        verbose: false,
+        verbose: session.verbose,
     })
 }
 
 /// Asks where to move files to and how to split them, then runs `distribute` with `root`
 /// as the source.
-fn distribute_flow(root: &Path) -> Result<()> {
+fn distribute_flow(root: &Path, session: &Session) -> Result<()> {
     println!(
         "Files will be moved OUT of {} into the folders you name.",
         root.display()
@@ -276,7 +281,6 @@ fn distribute_flow(root: &Path) -> Result<()> {
         .interact()?;
 
     distribute::run(&DistributeArgs {
-        safety: SafetyArgs::default(),
         from: vec![root.to_path_buf()],
         to,
         ratio,
@@ -295,15 +299,16 @@ fn distribute_flow(root: &Path) -> Result<()> {
         },
         granularity: Granularity::Item,
         prefer: Prefer::Largest,
-        filter: FilterArgs::default(),
-        dry_run: false,
+        filter: session.filter.clone(),
+        safety: session.safety.clone(),
+        dry_run: session.dry_run,
         yes: false,
-        verbose: false,
+        verbose: session.verbose,
     })
 }
 
 /// Collects extra folders to compare against `root` (which becomes the primary).
-fn compare_flow(root: &Path) -> Result<()> {
+fn compare_flow(root: &Path, session: &Session) -> Result<()> {
     println!(
         "{} is the primary folder: its copies are kept.",
         root.display()
@@ -321,17 +326,17 @@ fn compare_flow(root: &Path) -> Result<()> {
     }
     compare::run(&CompareArgs {
         paths,
-        safety: SafetyArgs::default(),
-        filter: FilterArgs::default(),
-        depth: None,
+        safety: session.safety.clone(),
+        filter: session.filter.clone(),
+        depth: session.depth,
         action: None,
-        dry_run: false,
+        dry_run: session.dry_run,
         yes: false,
-        verbose: false,
+        verbose: session.verbose,
     })
 }
 
-fn restore_flow(root: &Path) -> Result<()> {
+fn restore_flow(root: &Path, session: &Session) -> Result<()> {
     let mut active = restore::active_journals(root)?;
     if active.is_empty() {
         ui::success("Nothing to restore: no active runs recorded for this folder.");
@@ -345,7 +350,13 @@ fn restore_flow(root: &Path) -> Result<()> {
         .default(0)
         .interact()?;
     let mut journal = active.swap_remove(pick);
-    restore::restore_one(root, &mut journal, ConflictPolicy::Rename, false, false)
+    restore::restore_one(
+        root,
+        &mut journal,
+        ConflictPolicy::Rename,
+        session.dry_run,
+        false,
+    )
 }
 
 fn describe(journal: &Journal) -> String {

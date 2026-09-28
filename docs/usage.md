@@ -6,7 +6,40 @@ tidy-up [COMMAND]
 
 With no command, the interactive menu starts (requires a terminal).
 Every command takes a folder as its first positional argument; the default is
-the current directory. Aliases: `o` organize, `d` dedupe, `c` compare, `a` analyze, `x` distribute, `r` restore, `h` history.
+the current directory. Aliases: `o` organize, `ro` reorganize, `d` dedupe, `c` compare,
+`a` analyze, `x` distribute, `r` restore, `h` history.
+
+## Options in the interactive menu
+
+If you started tidy-up by double-clicking it, or just ran `tidy-up` with nothing after
+it, there is no command line to put flags on. **Change options** in the menu sets the
+same things, and they apply to every action until you change them again:
+
+| Menu option | Same as |
+|---|---|
+| Preview only, change nothing | `--dry-run` |
+| Folders to look through | `--depth` |
+| Include hidden files and folders | `--include-hidden` |
+| Include shortcuts | `--include-shortcuts` |
+| Extensions to leave alone | `--ignore-ext` |
+| Names or patterns to leave alone | `--ignore` |
+| Code projects | `--projects keep\|move` |
+| List every item, not a sample | `--verbose` |
+| Write a run log | `--log` |
+| Allow folders the system manages | `--allow-system-folder` |
+
+Whatever is not at its default is listed above the menu, so you can see at a glance
+what the next action will do:
+
+```text
+  Options: preview only · all sub-folders · including hidden
+```
+
+Two notes. Turning on **Allow folders the system manages** asks you to confirm, and
+the guard still asks again before anything is changed, so it is two deliberate steps
+rather than one. And these are remembered for as long as the program is open and no
+longer: tidy-up writes no configuration file, so there is nothing to clean up and
+nothing to carry a surprise into the next run.
 
 ## `organize`
 
