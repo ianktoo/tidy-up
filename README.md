@@ -180,7 +180,28 @@ Can it still be undone?
 This matters most when something other than a person did the work. An undo
 journal is only worth having if somebody can read it.
 
-### 10. It is built to be driven by something other than a person
+### 10. It speaks MCP, carefully
+
+`tidy-up mcp` serves the Model Context Protocol on stdin and stdout, so an
+agent can analyze a folder, propose a plan, and carry it out after you agree.
+
+```json
+{"mcpServers": {"tidy-up": {"command": "tidy-up",
+  "args": ["mcp", "--root", "D:\\Downloads", "--allow-writes"]}}}
+```
+
+The interesting part is what it refuses to let an agent do. **It never accepts
+a list of moves.** An agent asks for a plan, gets a `plan_id`, and applies
+that, so something acting on instructions it read in a file cannot turn the
+apply step into "move this over that". Everything is confined to `--root`,
+canonically, so `..` and symlinks do not get out. Writes are off unless you
+ask for them, and the system-folder guard has no override on this interface at
+all: a server pointed at a folder the guard refuses will not start.
+
+No new dependencies: MCP is JSON-RPC over stdio, which `serde_json` already
+covers.
+
+### 11. It is built to be driven by something other than a person
 
 Every command takes `--json` and prints exactly one object, whatever happened.
 Errors carry a stable code, and the exit code says whether tidy-up refused
@@ -200,7 +221,7 @@ before anything moves tidy-up checks that every path in it sits inside the
 plan's own root and that the root still passes the guard. A plan that reaches
 outside itself is refused rather than carried out.
 
-### 11. One bad file never ends the run
+### 12. One bad file never ends the run
 
 A locked file, a folder you lack permission to read, a name the filesystem rejects:
 each is skipped, classified and reported at the end, grouped by cause with something
@@ -218,7 +239,7 @@ A run that skipped things still exits `0`, because it did the work it could. Pas
 failure, which is fatal on purpose and rolls back the move in flight: a change that
 cannot be recorded is a change you cannot undo.
 
-### 12. It stays out of your way
+### 13. It stays out of your way
 
 - **Shortcuts and hidden files skipped by default** (`.lnk`, `.url`, dotfiles, `desktop.ini`); opt in with a flag.
 - **Ignore anything** by extension, glob or exact name, from flags or a text file you commit alongside your dotfiles.

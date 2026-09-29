@@ -7,6 +7,7 @@ pub mod dedupe;
 pub mod distribute;
 pub(crate) mod guard;
 pub mod interactive;
+pub mod mcp;
 pub mod organize;
 pub mod reorganize;
 pub mod restore;
@@ -88,6 +89,7 @@ pub fn dispatch(cli: Cli) -> Result<Outcome> {
         Some(Command::Distribute(args)) => distribute::run(&args),
         Some(Command::Apply(args)) => apply::run(&args),
         Some(Command::Restore(args)) => restore::run(&args),
+        Some(Command::Mcp(args)) => mcp::run(&args),
         Some(Command::Show(args)) => show::run(&args),
         Some(Command::History(args)) => restore::history(&args),
         Some(Command::Purge(args)) => dedupe::purge(&args),

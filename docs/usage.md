@@ -351,6 +351,74 @@ A run that finishes with no conflicts or failures is marked restored and won't
 be applied twice. Files deleted since the run are reported as missing and don't
 block completion.
 
+## `mcp`
+
+Serve the Model Context Protocol on stdin and stdout, so an agent can drive
+tidy-up.
+
+```sh
+tidy-up mcp --root <FOLDER> [--allow-writes]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `--root <FOLDER>` | `.` | The only folder the server can reach |
+| `--allow-writes` | off | Also offer the tools that change things |
+
+Configure it the way your client configures any stdio MCP server:
+
+```json
+{
+  "mcpServers": {
+    "tidy-up": {
+      "command": "tidy-up",
+      "args": ["mcp", "--root", "D:\\Downloads", "--allow-writes"]
+    }
+  }
+}
+```
+
+### Tools
+
+Always available, and none of them change anything:
+
+| Tool | What it does |
+|---|---|
+| `analyze` | Where the space goes in a folder |
+| `plan_organize` | How sorting loose files would go. Returns a `plan_id` |
+| `plan_reorganize` | How re-filing a tree by grouping keys would go. Returns a `plan_id` |
+| `list_runs` | Previous runs recorded for a folder |
+| `show_run` | What one run did, and whether it can still be undone |
+
+Only with `--allow-writes`:
+
+| Tool | What it does |
+|---|---|
+| `apply_plan` | Carries out a plan, by the `plan_id` a `plan_*` tool returned |
+| `restore_run` | Undoes a run |
+
+### How it is kept safe
+
+Handing a bulk file mover to an agent is a bad idea unless every action can be
+reviewed first and reversed afterwards. Both were already true here: a plan is
+pure data, and every change is journaled. On top of that:
+
+- **An agent never says what to move.** It asks for a plan, gets a `plan_id`,
+  and applies that. `apply_plan` takes the id and nothing else, so an agent
+  acting on instructions it read somewhere cannot turn it into "move this file
+  over that one". A plan is consumed when applied, so it cannot be replayed.
+- **Everything is confined to `--root`.** A path argument that resolves
+  outside it is refused, and the check is on the canonical path, so `..` and
+  symbolic links are caught too.
+- **Read-only by default.** Without `--allow-writes` the mutating tools are
+  not listed at all, so an agent cannot discover them.
+- **The system-folder guard cannot be overridden here.** There is no way to
+  pass `--allow-system-folder` through this interface, and a server rooted at
+  a folder the guard refuses will not start.
+
+Plans are held in memory for the life of the server, so `plan_id`s do not
+survive a restart.
+
 ## `show`
 
 What one run actually did, and whether it can still be undone. `history` lists
