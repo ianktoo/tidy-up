@@ -31,7 +31,8 @@ pub enum MoveKind {
 }
 
 /// What to do with detected code/git project folders.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ProjectPolicy {
     /// Leave projects exactly where they are (safe default; moving can break tooling).
     #[default]

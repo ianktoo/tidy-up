@@ -30,7 +30,7 @@ pub fn run(args: &ReorganizeArgs) -> Result<Outcome> {
     let options = ScanOptions {
         // Unlimited by default, and with an empty skip list: the whole point is
         // to look inside the category folders a previous run created.
-        max_depth: args.depth.map_or(usize::MAX, |d| d as usize),
+        max_depth: crate::cli::depth_or(args.depth, u32::MAX) as usize,
         rules: args.filter.to_rules()?,
         skip_root_dirs: Default::default(),
     };
@@ -56,7 +56,20 @@ pub fn run(args: &ReorganizeArgs) -> Result<Outcome> {
         ui::plural(scanned.files.len(), "file")
     ));
 
-    let reorganized = build_reorganize_plan(&root, &scanned, &args.by, args.projects, utc_offset());
+    let keys = if args.by == vec![crate::regroup::GroupBy::Type]
+        && !crate::config::defaults().by.is_empty()
+    {
+        crate::config::defaults().by.clone()
+    } else {
+        args.by.clone()
+    };
+    let reorganized = build_reorganize_plan(
+        &root,
+        &scanned,
+        &keys,
+        crate::cli::projects_or(args.projects),
+        utc_offset(),
+    );
     let emptied: Vec<_> = if args.keep_empty_dirs {
         Vec::new()
     } else {
@@ -70,7 +83,7 @@ pub fn run(args: &ReorganizeArgs) -> Result<Outcome> {
         ui::print_skipped(&root, &plan.skipped, args.verbose);
         ui::success(&format!(
             "Nothing to do: this folder is already grouped by {}.",
-            describe(&args.by)
+            describe(&keys)
         ));
         return Ok(outcome);
     }
@@ -96,7 +109,7 @@ pub fn run(args: &ReorganizeArgs) -> Result<Outcome> {
     let mut prompt = format!(
         "Move {} and re-file by {}?",
         ui::plural(plan.moves.len(), "item"),
-        describe(&args.by)
+        describe(&keys)
     );
     if !emptied.is_empty() {
         prompt.push_str(&format!(

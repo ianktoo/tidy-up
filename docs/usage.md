@@ -15,12 +15,87 @@ These work with any command, before or after it.
 
 | Option | Default | Description |
 |---|---|---|
+| `--config <FILE>` | | Read policy and defaults from this file. `TIDY_UP_CONFIG` does the same |
+| `--profile <NAME>` | | Use a named set of defaults from the config |
 | `--json` | off | Print one JSON object describing the run instead of the usual output. See [Machine output](#machine-output) |
 | `--log` | off | Write a JSON Lines record of the run to `<folder>/.tidy-up/logs/`. `TIDY_UP_LOG=1` does the same |
 | `--strict` | off | Exit non-zero if anything had to be skipped. Without it, a run that skipped items still succeeds |
 
 `TIDY_UP_UTC_OFFSET` (for example `+03:00`) shifts the dates used by
 `reorganize --by year|month|day`, which are otherwise UTC.
+
+## Configuration
+
+Two different things live in one file, and the difference matters.
+
+A **policy** is a ceiling. Flags cannot raise it. It is how an installation
+says "this machine may only tidy these folders, and may never touch a system
+folder", and have that hold whatever anyone types.
+
+**Defaults** are a floor. They save typing, and any flag overrides them.
+
+```json
+{
+  "format": 1,
+  "policy": {
+    "roots": ["D:\\Media", "E:\\Archive"],
+    "allow_writes": true,
+    "allow_system_folders": false,
+    "allow_delete": false,
+    "max_depth": 4
+  },
+  "defaults": {
+    "ignore_ext": ["iso", "tmp"],
+    "ignore": ["*.bak"],
+    "include_hidden": false,
+    "projects": "keep",
+    "depth": 2,
+    "log": true
+  },
+  "profiles": {
+    "photos": { "by": ["year", "month"], "depth": 4 }
+  }
+}
+```
+
+```sh
+tidy-up reorganize D:\Media --config policy.json --profile photos
+```
+
+JSON rather than TOML because tidy-up takes no dependency it does not need,
+and the journals, run logs, plan files and MCP interface are already JSON.
+
+### Policy
+
+| Field | Effect when set |
+|---|---|
+| `roots` | Only these folders, and anything inside them, may be worked on |
+| `allow_writes` | `false` refuses every command that would change something |
+| `allow_system_folders` | `false` makes `--allow-system-folder` an **error**, not a silent no |
+| `allow_delete` | `false` refuses `purge` and `compare --action delete` |
+| `max_depth` | Caps `--depth`; a smaller request is left alone |
+
+Every field is optional, and an absent policy restricts nothing, so tidy-up
+without a config behaves exactly as it always has.
+
+A misspelled field is an error rather than being ignored. An installation that
+believes it is locked down must not quietly turn out not to be, and
+`allow_system_folder` for `allow_system_folders` would otherwise do exactly
+that.
+
+### Where configuration comes from
+
+A **policy is only ever read from a path someone named**: `--config`, or
+`TIDY_UP_CONFIG`. It is never discovered.
+
+**Defaults** may additionally come from `.tidy-up.json` in the folder being
+worked on, which is convenient and travels with the folder. That file may not
+contain a policy, and one found there is ignored.
+
+This asymmetry is deliberate. If a policy could be discovered from the folder
+being processed, then unpacking an archive and running tidy-up on it would let
+the archive decide what tidy-up may do to it. Auto-discovered configuration
+may lower the bar for convenience; it may never raise it for permission.
 
 ## Machine output
 

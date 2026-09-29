@@ -239,7 +239,23 @@ A run that skipped things still exits `0`, because it did the work it could. Pas
 failure, which is fatal on purpose and rolls back the move in flight: a change that
 cannot be recorded is a change you cannot undo.
 
-### 13. It stays out of your way
+### 13. An installation can say what it permits
+
+A config file separates two things that are usually muddled. A **policy** is a
+ceiling that flags cannot raise: these folders only, never a system folder,
+never delete. **Defaults** are a floor that any flag overrides.
+
+```json
+{"policy": {"roots": ["D:\\Media"], "allow_system_folders": false},
+ "profiles": {"photos": {"by": ["year", "month"]}}}
+```
+
+A policy is only ever read from a path you named, never discovered. Defaults
+may also come from `.tidy-up.json` in the folder being worked on, and a policy
+found *there* is ignored, because otherwise unpacking an archive and tidying
+it would let the archive decide what may be done to it.
+
+### 14. It stays out of your way
 
 - **Shortcuts and hidden files skipped by default** (`.lnk`, `.url`, dotfiles, `desktop.ini`); opt in with a flag.
 - **Ignore anything** by extension, glob or exact name, from flags or a text file you commit alongside your dotfiles.

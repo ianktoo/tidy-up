@@ -59,8 +59,11 @@ const UNKNOWN_DATE: &str = "Unknown date";
 const OTHER: &str = "Other";
 
 /// One level of the folder hierarchy a reorganize run builds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, clap::ValueEnum, serde::Serialize, serde::Deserialize,
+)]
 #[value(rename_all = "lower")]
+#[serde(rename_all = "lowercase")]
 pub enum GroupBy {
     /// Broad file type: `Images`, `Documents`, `3D Models`.
     ///

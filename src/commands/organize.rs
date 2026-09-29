@@ -20,7 +20,7 @@ pub fn run(args: &OrganizeArgs) -> Result<Outcome> {
         .with_filter(&args.filter)
         .root(&args.path)?;
     let options = ScanOptions {
-        max_depth: args.depth as usize,
+        max_depth: crate::cli::depth_or((args.depth != 1).then_some(args.depth), 1) as usize,
         rules: args.filter.to_rules()?,
         skip_root_dirs: organize_skip_dirs(),
     };
@@ -46,7 +46,7 @@ pub fn run(args: &OrganizeArgs) -> Result<Outcome> {
         ui::plural(scanned.files.len(), "file")
     ));
 
-    let plan = build_organize_plan(&root, &scanned, args.projects);
+    let plan = build_organize_plan(&root, &scanned, crate::cli::projects_or(args.projects));
     obs::plan_built("organize", &plan);
     let mut outcome = Outcome::at(&root, args.dry_run).with_scan(&scanned, args.verbose);
     if plan.is_empty() {

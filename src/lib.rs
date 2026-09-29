@@ -13,6 +13,7 @@
 //! | act | [`executor`], [`fsops`] | perform moves safely, never overwriting |
 //! | remember | [`journal`] | append-only JSON Lines undo log |
 //! | guard | [`safety`] | refuse to reorganize folders the system manages |
+//! | permit | [`config`] | what this installation allows, and what it defaults to |
 //! | survive | [`outcome`] | collect failures, skip the item, keep going |
 //! | observe | [`obs`] | a JSON Lines record of what a run decided |
 //! | undo | [`restore`] | reverse a journal |
@@ -41,6 +42,7 @@ pub mod category;
 pub mod cli;
 pub mod commands;
 pub mod compare;
+pub mod config;
 pub mod dedupe;
 pub mod disk;
 pub mod distribute;
@@ -78,8 +80,21 @@ pub fn run() -> api::Exit {
     // prose and JSON on the same stream.
     ui::set_quiet(json);
 
-    obs::start(command, cli.log);
-    let result = commands::dispatch(cli);
+    // The policy is installed before anything runs, so every later check
+    // sees the same one. A bad config stops the run rather than being
+    // ignored: an installation that believes it is restricted must not
+    // quietly turn out not to be.
+    let configured = config::install(cli.config.as_deref(), cli.profile.as_deref());
+    let result = match configured {
+        Ok(()) => {
+            obs::start(command, cli.log || config::defaults().log == Some(true));
+            commands::dispatch(cli)
+        }
+        Err(error) => {
+            obs::start(command, false);
+            Err(error)
+        }
+    };
 
     let (status, exit) = match &result {
         Ok(outcome) if strict && outcome.had_problems() => (obs::Status::Ok, api::Exit::Skipped),
