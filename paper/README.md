@@ -4,6 +4,10 @@
 Reversible Re-grouping*, by Ian Too
 ([ORCID 0009-0000-4888-1941](https://orcid.org/0009-0000-4888-1941)).
 
+**Scope: this paper describes the work released in 0.2.0.** The machine interface,
+the `show` review surface, the MCP server and the policy file came afterwards and are
+not covered yet.
+
 The paper documents the safety, survivability, re-grouping and observability work in
 this repository: what was built, why each choice was made, what was deliberately left
 out, and how each property is tested.
