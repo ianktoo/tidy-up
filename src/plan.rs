@@ -41,7 +41,7 @@ pub enum ProjectPolicy {
 }
 
 /// One planned relocation.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlannedMove {
     /// Current absolute location.
     pub from: PathBuf,

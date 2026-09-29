@@ -1,15 +1,10 @@
 //! `tidy-up` binary entry point.
+//!
+//! Everything, including reporting and the exit code, is decided in
+//! [`tidy_up::run`]; this only hands the code to the operating system.
 
 use std::process::ExitCode;
 
-use console::style;
-
 fn main() -> ExitCode {
-    match tidy_up::run() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("{} {err:#}", style("error:").red().bold());
-            ExitCode::FAILURE
-        }
-    }
+    tidy_up::run().into()
 }

@@ -3,6 +3,7 @@
 use anyhow::Result;
 
 use crate::{
+    api::{Outcome, PlanFile},
     cli::OrganizeArgs,
     commands::{guard::Guard, print_execution},
     executor::execute,
@@ -14,7 +15,7 @@ use crate::{
 };
 
 /// Scans, plans, confirms and performs an organize run.
-pub fn run(args: &OrganizeArgs) -> Result<()> {
+pub fn run(args: &OrganizeArgs) -> Result<Outcome> {
     let root = Guard::write(&args.safety, args.yes, args.dry_run)
         .with_filter(&args.filter)
         .root(&args.path)?;
@@ -47,32 +48,36 @@ pub fn run(args: &OrganizeArgs) -> Result<()> {
 
     let plan = build_organize_plan(&root, &scanned, args.projects);
     obs::plan_built("organize", &plan);
+    let mut outcome = Outcome::at(&root, args.dry_run).with_scan(&scanned, args.verbose);
     if plan.is_empty() {
         ui::print_skipped(&root, &plan.skipped, args.verbose);
         ui::success("Nothing to organize: this folder is already tidy.");
-        return Ok(());
+        return Ok(outcome);
     }
+    outcome.plan = Some(PlanFile::of(&plan, Operation::Organize));
     ui::print_plan(&plan, args.verbose);
     ui::print_skipped(&root, &plan.skipped, args.verbose);
 
     if args.dry_run {
-        println!();
+        crate::out!();
         ui::warn("Dry run: nothing was changed.");
-        return Ok(());
+        return Ok(outcome);
     }
-    println!();
+    crate::out!();
     let prompt = format!(
         "Move {} into category folders?",
         ui::plural(plan.moves.len(), "item")
     );
     if !ui::confirm(&prompt, true, args.yes)? {
         ui::info("Cancelled. Nothing was changed.");
-        return Ok(());
+        return Ok(outcome);
     }
 
     let bar = ui::TransferBar::new("Organizing");
     let report = execute(&plan, Operation::Organize, |p| bar.update(p));
     bar.finish();
-    print_execution(&root, &report?);
-    Ok(())
+    let report = report?;
+    print_execution(&root, &report);
+    outcome.execution = Some(report);
+    Ok(outcome)
 }

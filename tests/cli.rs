@@ -29,6 +29,21 @@ fn s(p: &Path) -> &str {
     p.to_str().unwrap()
 }
 
+/// The analyses inside a `--json` envelope.
+///
+/// Since 0.3.0 every command prints the same envelope, so an analysis is no
+/// longer the whole of stdout: it is the `detail` of the outcome.
+fn analysis(out: &Output) -> Vec<serde_json::Value> {
+    let text = stdout(out);
+    let envelope: serde_json::Value = serde_json::from_str(text.trim())
+        .unwrap_or_else(|e| panic!("not one JSON object ({e}): {text}"));
+    assert_eq!(envelope["status"], "ok", "{envelope}");
+    envelope["outcome"]["detail"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no analysis in {envelope}"))
+        .clone()
+}
+
 #[test]
 fn help_and_version_work() {
     let help = tidy(&["--help"]);
@@ -401,8 +416,8 @@ fn analyze_json_is_valid_and_complete() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
-    let json: serde_json::Value = serde_json::from_str(&stdout(&out)).expect("valid JSON");
-    let report = &json[0];
+    let reports = analysis(&out);
+    let report = &reports[0];
     assert_eq!(report["files"], 2);
     assert_eq!(report["bytes"], 8);
     assert_eq!(
@@ -422,9 +437,9 @@ fn analyze_duplicates_flag_measures_waste() {
     write(dir.path(), "copy/b.bin", &"same".repeat(100));
     write(dir.path(), "c.bin", "different");
     let out = tidy(&["analyze", s(dir.path()), "--duplicates", "--json"]);
-    let json: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
-    assert_eq!(json[0]["duplicates"]["extra_copies"], 1);
-    assert_eq!(json[0]["duplicates"]["reclaimable_bytes"], 400);
+    let reports = analysis(&out);
+    assert_eq!(reports[0]["duplicates"]["extra_copies"], 1);
+    assert_eq!(reports[0]["duplicates"]["reclaimable_bytes"], 400);
     assert!(
         dir.path().join("copy/b.bin").exists(),
         "analysis never moves anything"
@@ -437,8 +452,7 @@ fn analyze_handles_several_folders_and_bad_input() {
     write(a.path(), "x.txt", "1");
     write(b.path(), "y.txt", "22");
     let out = tidy(&["analyze", s(a.path()), s(b.path()), "--json"]);
-    let json: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
-    assert_eq!(json.as_array().unwrap().len(), 2);
+    assert_eq!(analysis(&out).len(), 2);
 
     let out = tidy(&["analyze", "/definitely/not/here"]);
     assert!(!out.status.success());

@@ -46,6 +46,13 @@ pub struct Cli {
     /// succeeds. Scripts that need to know otherwise can ask.
     #[arg(long, global = true)]
     pub strict: bool,
+    /// Print one JSON object describing the run, instead of the usual output.
+    ///
+    /// Everything else is silenced, so the output is parseable whatever
+    /// happened. Confirmation prompts are not available without a terminal,
+    /// so pair this with `--yes` or `--dry-run`.
+    #[arg(long, global = true)]
+    pub json: bool,
 }
 
 impl Cli {
@@ -59,6 +66,7 @@ impl Cli {
             Some(Command::Compare(_)) => "compare",
             Some(Command::Analyze(_)) => "analyze",
             Some(Command::Distribute(_)) => "distribute",
+            Some(Command::Apply(_)) => "apply",
             Some(Command::Restore(_)) => "restore",
             Some(Command::History(_)) => "history",
             Some(Command::Purge(_)) => "purge",
@@ -88,6 +96,8 @@ pub enum Command {
     /// Move files from full folders into other places (partitions) by ratio, free space or fill level.
     #[command(visible_alias = "x")]
     Distribute(DistributeArgs),
+    /// Carry out a plan produced earlier by `--dry-run --json`.
+    Apply(ApplyArgs),
     /// Undo a previous run and put files back where they were.
     #[command(visible_alias = "r")]
     Restore(RestoreArgs),
@@ -292,9 +302,6 @@ pub struct AnalyzeArgs {
     /// How many entries to list in each "largest" section.
     #[arg(short, long, default_value_t = 10, value_parser = clap::value_parser!(u32).range(0..=1000))]
     pub top: u32,
-    /// Print machine-readable JSON instead of a report.
-    #[arg(long)]
-    pub json: bool,
     /// Also measure space wasted by duplicate files (reads file contents, so it is slower).
     #[arg(long)]
     pub duplicates: bool,
@@ -351,6 +358,24 @@ pub struct DistributeArgs {
     #[arg(short, long)]
     pub yes: bool,
     /// List every item and every skipped entry.
+    #[arg(short, long)]
+    pub verbose: bool,
+}
+
+/// Arguments for `apply`.
+#[derive(Debug, Args, Clone)]
+pub struct ApplyArgs {
+    /// Plan file to carry out. Either a bare plan or a whole `--json` envelope.
+    pub plan: PathBuf,
+    #[command(flatten)]
+    pub safety: SafetyArgs,
+    /// Show what the plan would do without carrying it out.
+    #[arg(short = 'n', long)]
+    pub dry_run: bool,
+    /// Do not ask for confirmation.
+    #[arg(short, long)]
+    pub yes: bool,
+    /// List every move in the plan.
     #[arg(short, long)]
     pub verbose: bool,
 }
@@ -493,14 +518,20 @@ mod tests {
             panic!("expected analyze");
         };
         assert_eq!(a.paths, [PathBuf::from(".")]);
-        assert_eq!((a.top, a.json, a.duplicates), (10, false, false));
-        let Some(Command::Analyze(a)) =
-            parse(&["a", "C:/", "D:/", "--top", "3", "--json", "--duplicates"]).command
-        else {
+        assert_eq!((a.top, a.duplicates), (10, false));
+        // `--json` is global now, so it parses the same before or after the
+        // sub-command and applies to every one of them.
+        let parsed = parse(&["a", "C:/", "D:/", "--top", "3", "--json", "--duplicates"]);
+        assert!(parsed.json);
+        let Some(Command::Analyze(a)) = parsed.command else {
             panic!("expected analyze");
         };
         assert_eq!(a.paths.len(), 2);
-        assert_eq!((a.top, a.json, a.duplicates), (3, true, true));
+        assert_eq!((a.top, a.duplicates), (3, true));
+        assert!(
+            parse(&["--json", "organize"]).json,
+            "before the sub-command too"
+        );
     }
 
     #[test]

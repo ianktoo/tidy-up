@@ -9,6 +9,7 @@
 use anyhow::Result;
 
 use crate::{
+    api::{Outcome, PlanFile},
     cli::ReorganizeArgs,
     commands::{guard::Guard, print_execution},
     executor::execute_and_clean,
@@ -21,7 +22,7 @@ use crate::{
 };
 
 /// Scans, plans, confirms and performs a reorganize run.
-pub fn run(args: &ReorganizeArgs) -> Result<()> {
+pub fn run(args: &ReorganizeArgs) -> Result<Outcome> {
     let root = Guard::write(&args.safety, args.yes, args.dry_run)
         .with_filter(&args.filter)
         .root(&args.path)?;
@@ -64,19 +65,21 @@ pub fn run(args: &ReorganizeArgs) -> Result<()> {
     let plan = &reorganized.plan;
     obs::plan_built("reorganize", plan);
 
+    let mut outcome = Outcome::at(&root, args.dry_run).with_scan(&scanned, args.verbose);
     if plan.is_empty() && emptied.is_empty() {
         ui::print_skipped(&root, &plan.skipped, args.verbose);
         ui::success(&format!(
             "Nothing to do: this folder is already grouped by {}.",
             describe(&args.by)
         ));
-        return Ok(());
+        return Ok(outcome);
     }
+    outcome.plan = Some(PlanFile::of(plan, Operation::Reorganize));
     ui::print_plan(plan, args.verbose);
     ui::print_skipped(&root, &plan.skipped, args.verbose);
 
     if args.dry_run {
-        println!();
+        crate::out!();
         if !emptied.is_empty() {
             ui::info(&format!(
                 "{} would be left empty and deleted",
@@ -84,10 +87,10 @@ pub fn run(args: &ReorganizeArgs) -> Result<()> {
             ));
         }
         ui::warn("Dry run: nothing was changed.");
-        return Ok(());
+        return Ok(outcome);
     }
 
-    println!();
+    crate::out!();
     // The blast radius is stated plainly: this command moves far more than
     // `organize` does, and deletes folders, which `organize` never does.
     let mut prompt = format!(
@@ -103,7 +106,7 @@ pub fn run(args: &ReorganizeArgs) -> Result<()> {
     }
     if !ui::confirm(&prompt, true, args.yes)? {
         ui::info("Cancelled. Nothing was changed.");
-        return Ok(());
+        return Ok(outcome);
     }
 
     let bar = ui::TransferBar::new("Reorganizing");
@@ -117,5 +120,6 @@ pub fn run(args: &ReorganizeArgs) -> Result<()> {
         ));
     }
     print_execution(&root, &report);
-    Ok(())
+    outcome.execution = Some(report);
+    Ok(outcome)
 }

@@ -15,11 +15,87 @@ These work with any command, before or after it.
 
 | Option | Default | Description |
 |---|---|---|
+| `--json` | off | Print one JSON object describing the run instead of the usual output. See [Machine output](#machine-output) |
 | `--log` | off | Write a JSON Lines record of the run to `<folder>/.tidy-up/logs/`. `TIDY_UP_LOG=1` does the same |
 | `--strict` | off | Exit non-zero if anything had to be skipped. Without it, a run that skipped items still succeeds |
 
 `TIDY_UP_UTC_OFFSET` (for example `+03:00`) shifts the dates used by
 `reorganize --by year|month|day`, which are otherwise UTC.
+
+## Machine output
+
+`--json` prints exactly one JSON object on stdout and nothing else, whatever
+happened. Everything the terminal would have shown is silenced, including
+progress bars, so the output is always parseable.
+
+```console
+$ tidy-up organize D:\Downloads --dry-run --json
+{"tidy_up":"0.3.0","format":1,"command":"organize","status":"ok","outcome":{...}}
+```
+
+| Field | Meaning |
+|---|---|
+| `tidy_up` | Version of the tool |
+| `format` | Version of this format. Bumped if anything here changes meaning |
+| `command` | Sub-command that ran |
+| `status` | `ok` or `error` |
+| `outcome` | What it did. Present on success |
+| `error` | `{code, message, path}`. Present on failure |
+
+Inside `outcome`, every field is optional, because commands differ: `root` and
+`roots`, `dry_run`, `plan`, `execution`, `restore`, `detail` (command-specific,
+such as an analysis), `skipped` (counts by reason), `skipped_items` (only with
+`--verbose`) and `problems`.
+
+Confirmation prompts need a terminal, so pair `--json` with `--yes` or
+`--dry-run`.
+
+### Error codes
+
+`error.code` is stable; `error.message` is prose and may be reworded.
+
+| Code | Meaning | Exit |
+|---|---|---|
+| `system_folder` | Refused by the guard | 3 |
+| `not_writable` | Refused: cannot write there, and no flag overrides it | 3 |
+| `cancelled` | You declined a confirmation | 0 |
+| `not_found` | The path does not exist | 1 |
+| `not_a_folder` | The path is not a folder | 2 |
+| `denied` | Permission denied | 1 |
+| `overlap` | Folders overlap when they must be separate | 1 |
+| `invalid_plan` | A plan file could not be read, or describes something unsafe | 1 |
+| `invalid_journal` | A journal could not be read | 1 |
+| `invalid` | The arguments did not make sense | 2 |
+| `io` | Any other I/O failure | 1 |
+| `internal` | A bug. Worth reporting | 1 |
+
+## `apply`
+
+Carry out a plan that an earlier `--dry-run --json` produced. Propose, review,
+then apply: nothing is re-decided in between.
+
+```sh
+tidy-up organize D:\Downloads --dry-run --json > plan.json
+# read plan.json, or hand it to someone who will
+tidy-up apply plan.json --yes
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-n, --dry-run` | off | Show what the plan would do; change nothing |
+| `-y, --yes` | off | Skip confirmation |
+| `-v, --verbose` | off | List every move in the plan |
+| `--allow-system-folder` | off | As for any other command |
+
+The file may be a bare plan or a whole `--json` envelope with one inside.
+
+A plan file is a **trust boundary**: it is JSON on disk, so it may have been
+edited by hand or produced by something acting on instructions from elsewhere.
+Before anything moves, tidy-up checks that every path in it is absolute and
+inside the plan's own root, that the counts match, and that the root still
+passes the system-folder guard. A plan that reaches outside its root is
+refused. Files that moved or vanished since the plan was written are reported
+as problems, and the rest of the plan still runs.
 
 ## The system-folder guard
 
@@ -210,7 +286,6 @@ tidy-up analyze [PATH]... [OPTIONS]
 | Option | Default | Description |
 |---|---|---|
 | `-t, --top <N>` | `10` | Entries in each "largest" list (`0` to hide them) |
-| `--json` | off | Print JSON (an array, one object per folder) instead of a report |
 | `--duplicates` | off | Also measure space wasted by duplicate files; reads file contents, so it is slower |
 
 The report has: file, folder and byte totals; usage of the partition holding the folder; a breakdown by
@@ -336,9 +411,18 @@ A folder is a project if it directly contains any of: `.git`, `.hg`, `.svn`,
 
 ## Exit codes
 
-`0` success (including "nothing to do", cancelled, and a run that skipped items),
-`1` runtime error or a refusal by the system-folder guard, `2` invalid arguments.
+| Code | Meaning |
+|---|---|
+| `0` | Success, including "nothing to do", a cancelled confirmation, and a run that skipped items it could not process |
+| `1` | Something went wrong and stopped the run |
+| `2` | The arguments did not make sense |
+| `3` | Refused deliberately: the system-folder guard, or a permission wall |
+| `4` | Finished, but items were skipped and `--strict` was given |
+
+`3` exists so a caller can tell a refusal from a malfunction. A refusal is an
+answer and should not be retried; a failure might be worth retrying or
+reporting. Before 0.3.0 both were `1`.
 
 A run that could not process some items still exits `0`, because it did the work it
-could; the items are listed at the end, grouped by cause. Pass `--strict` to exit
-non-zero instead.
+could; the items are listed at the end, grouped by cause, and appear under
+`problems` in `--json`. Pass `--strict` to exit `4` instead.

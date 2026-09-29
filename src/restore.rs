@@ -33,7 +33,7 @@ pub struct RestoreOptions {
 }
 
 /// What a restore did (or, for a dry run, would do).
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct RestoreReport {
     /// Items moved back to their original path.
     pub restored: usize,
