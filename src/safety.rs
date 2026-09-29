@@ -134,6 +134,14 @@ impl Parts {
     }
 }
 
+/// Whether `path` is `root` or lies inside it, under `platform`'s case rules.
+///
+/// Component-wise, like everything else here: `C:\Program Files Custom` is not
+/// inside `C:\Program Files`.
+pub fn under(path: &Path, root: &Path, platform: Platform) -> bool {
+    parts(path, platform).under(&parts(root, platform))
+}
+
 /// Splits `path` for `platform`: folds away verbatim prefixes, drops empty and `.`
 /// components, resolves `..`, and case-folds where the platform does.
 pub(crate) fn parts(path: &Path, platform: Platform) -> Parts {

@@ -28,7 +28,7 @@ pub fn run(args: &DedupeArgs) -> Result<Outcome> {
         .with_filter(&args.filter)
         .root(&args.path)?;
     let options = ScanOptions {
-        max_depth: args.depth.map_or(usize::MAX, |d| d as usize),
+        max_depth: crate::cli::depth_or(args.depth, u32::MAX) as usize,
         rules: args.filter.to_rules()?,
         skip_root_dirs: [DUPLICATES_DIR.to_lowercase()].into(),
     };

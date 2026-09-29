@@ -23,6 +23,7 @@ use anyhow::Result;
 use crate::{
     api::{ErrorCode, Refused},
     cli::{FilterArgs, SafetyArgs},
+    config,
     fsops::resolve_root,
     obs,
     safety::{
@@ -70,6 +71,10 @@ impl Guard {
     }
 
     /// A guard for a command that is about to change the folder.
+    ///
+    /// The override is resolved against the installation's policy here rather
+    /// than taken from the flag, so a policy that forbids it cannot be got
+    /// around by passing it.
     pub(crate) fn write(safety: &SafetyArgs, yes: bool, dry_run: bool) -> Self {
         Guard {
             access: Access::Write,
@@ -97,9 +102,28 @@ impl Guard {
         Ok(root)
     }
 
+    /// Applies the installation's policy, before anything else looks at the
+    /// folder. Separate from [`Guard::check`] because policy is about what
+    /// this machine permits, not about what the folder is.
+    fn policy(&self, root: &Path) -> Result<bool> {
+        let policy = config::policy();
+        policy
+            .check_root(root)
+            .map_err(|e| Refused::at(ErrorCode::SystemFolder, root, e.to_string()))?;
+        if self.access == Access::Write {
+            policy
+                .check_write()
+                .map_err(|e| Refused::at(ErrorCode::SystemFolder, root, e.to_string()))?;
+        }
+        Ok(policy
+            .resolve_override(self.allow)
+            .map_err(|e| Refused::at(ErrorCode::Invalid, root, e.to_string()))?)
+    }
+
     /// Applies the policy to an already-resolved folder, for `compare` and
     /// `distribute`, which canonicalize several paths of their own first.
     pub(crate) fn check(&self, original: &Path, root: &Path) -> Result<()> {
+        let allow = self.policy(root)?;
         // A dry run and a reporting command must leave the disk alone, so neither
         // finds out whether the folder is writable, since that costs a file
         // created and removed. The cost is that a dry run cannot tell you the
@@ -110,7 +134,9 @@ impl Guard {
         } else {
             assess_with(root, &SystemProbe::read_only())
         };
-        self.decide(original, &escalate_for_hidden(found, self.include_hidden))
+        let mut guard = *self;
+        guard.allow = allow;
+        guard.decide(original, &escalate_for_hidden(found, self.include_hidden))
     }
 
     fn decide(&self, original: &Path, assessment: &Assessment) -> Result<()> {

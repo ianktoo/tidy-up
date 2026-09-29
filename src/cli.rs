@@ -46,6 +46,15 @@ pub struct Cli {
     /// succeeds. Scripts that need to know otherwise can ask.
     #[arg(long, global = true)]
     pub strict: bool,
+    /// Read policy and defaults from this file.
+    ///
+    /// Never discovered: a policy only ever comes from a path someone named,
+    /// here or in `TIDY_UP_CONFIG`.
+    #[arg(long, global = true, value_name = "FILE")]
+    pub config: Option<PathBuf>,
+    /// Use a named set of defaults from the config.
+    #[arg(long, global = true, value_name = "NAME")]
+    pub profile: Option<String>,
     /// Print one JSON object describing the run, instead of the usual output.
     ///
     /// Everything else is silenced, so the output is parseable whatever
@@ -147,16 +156,47 @@ pub struct FilterArgs {
 
 impl FilterArgs {
     /// Builds the [`IgnoreRules`] these flags describe.
+    ///
+    /// Configured defaults fill in wherever a flag said nothing; a flag that
+    /// said something always wins. Defaults are a floor, not a ceiling.
     pub fn to_rules(&self) -> crate::error::Result<IgnoreRules> {
+        let defaults = crate::config::defaults();
+        let extensions = if self.ignore_ext.is_empty() {
+            &defaults.ignore_ext
+        } else {
+            &self.ignore_ext
+        };
+        let patterns = if self.ignore.is_empty() {
+            &defaults.ignore
+        } else {
+            &self.ignore
+        };
         let mut rules = IgnoreRules::new()
-            .include_shortcuts(self.include_shortcuts)
-            .include_hidden(self.include_hidden);
-        self.ignore_ext.iter().for_each(|e| rules.add_extension(e));
-        self.ignore.iter().for_each(|p| rules.add_entry(p));
+            .include_shortcuts(self.include_shortcuts || defaults.include_shortcuts == Some(true))
+            .include_hidden(self.include_hidden || defaults.include_hidden == Some(true));
+        extensions.iter().for_each(|e| rules.add_extension(e));
+        patterns.iter().for_each(|p| rules.add_entry(p));
         for file in &self.ignore_file {
             rules.load_file(file)?;
         }
         Ok(rules)
+    }
+}
+
+/// Resolves a depth: the flag if given, else the configured default, else
+/// `fallback`, and never above what policy permits.
+pub fn depth_or(flag: Option<u32>, fallback: u32) -> u32 {
+    let wanted = flag.or(crate::config::defaults().depth).unwrap_or(fallback);
+    crate::config::policy().cap_depth(wanted.max(1))
+}
+
+/// Resolves the project policy: the flag if it is not the default, else the
+/// configured one.
+pub fn projects_or(flag: ProjectPolicy) -> ProjectPolicy {
+    if flag == ProjectPolicy::default() {
+        crate::config::defaults().projects.unwrap_or(flag)
+    } else {
+        flag
     }
 }
 
