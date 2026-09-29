@@ -280,6 +280,7 @@ fn restore_handles_user_changes_made_after_organizing() {
     let options = RestoreOptions {
         conflict: ConflictPolicy::Rename,
         dry_run: false,
+        allow_outside: false,
     };
     let outcome = restore(&root, &mut journal, options, |_, _| {}).unwrap();
 
@@ -415,7 +416,12 @@ fn compare_move_across_folders_then_restore_is_exact() {
     let restored = restore(
         &t.roots[0],
         &mut journal,
-        RestoreOptions::default(),
+        RestoreOptions {
+            // A compare or distribute legitimately records paths in the other
+            // folders it was given, and undoing one has to reach them.
+            allow_outside: true,
+            ..Default::default()
+        },
         |_, _| {},
     )
     .unwrap();
@@ -466,7 +472,12 @@ fn compare_merge_gathers_everything_into_the_primary_and_restore_undoes_it() {
     let restored = restore(
         &t.roots[0],
         &mut journal,
-        RestoreOptions::default(),
+        RestoreOptions {
+            // A compare or distribute legitimately records paths in the other
+            // folders it was given, and undoing one has to reach them.
+            allow_outside: true,
+            ..Default::default()
+        },
         |_, _| {},
     )
     .unwrap();
@@ -618,7 +629,12 @@ fn distribute_by_ratio_then_restore_returns_every_file() {
     let restored = restore(
         &dests[0],
         &mut journal,
-        RestoreOptions::default(),
+        RestoreOptions {
+            // A compare or distribute legitimately records paths in the other
+            // folders it was given, and undoing one has to reach them.
+            allow_outside: true,
+            ..Default::default()
+        },
         |_, _| {},
     )
     .unwrap();
@@ -756,7 +772,12 @@ fn distribute_can_organize_into_category_folders_at_the_destination() {
     restore(
         &dests[0],
         &mut journal,
-        RestoreOptions::default(),
+        RestoreOptions {
+            // A compare or distribute legitimately records paths in the other
+            // folders it was given, and undoing one has to reach them.
+            allow_outside: true,
+            ..Default::default()
+        },
         |_, _| {},
     )
     .unwrap();
@@ -789,7 +810,12 @@ fn distribute_moves_a_git_project_whole_including_hidden_files() {
     restore(
         &dests[0],
         &mut journal,
-        RestoreOptions::default(),
+        RestoreOptions {
+            // A compare or distribute legitimately records paths in the other
+            // folders it was given, and undoing one has to reach them.
+            allow_outside: true,
+            ..Default::default()
+        },
         |_, _| {},
     )
     .unwrap();
@@ -928,7 +954,12 @@ fn three_nearly_full_partitions_are_levelled_by_the_fill_strategy() {
     restore(
         &dests[0],
         &mut journal,
-        RestoreOptions::default(),
+        RestoreOptions {
+            // A compare or distribute legitimately records paths in the other
+            // folders it was given, and undoing one has to reach them.
+            allow_outside: true,
+            ..Default::default()
+        },
         |_, _| {},
     )
     .unwrap();

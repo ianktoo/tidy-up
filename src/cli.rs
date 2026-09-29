@@ -433,6 +433,14 @@ pub struct RestoreArgs {
     /// Folder that was organized.
     #[arg(default_value = ".")]
     pub path: PathBuf,
+    /// Also put back items the run recorded outside this folder.
+    ///
+    /// Needed to undo a `compare` or `distribute` that spanned folders. You
+    /// are still asked to confirm, and `--yes` alone is not enough: a journal
+    /// lives inside the folder, so a folder from elsewhere can carry one
+    /// claiming a file belongs anywhere on the disk.
+    #[arg(long)]
+    pub allow_outside_root: bool,
     #[command(flatten)]
     pub safety: SafetyArgs,
     /// Journal id (or unique prefix) to restore; default is the most recent active one.

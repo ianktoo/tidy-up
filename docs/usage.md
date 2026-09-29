@@ -421,10 +421,18 @@ tidy-up restore [PATH] [OPTIONS]
 | `-n, --dry-run` | off | Report what would happen |
 | `-y, --yes` | off | Skip confirmation |
 | `--allow-system-folder` | off | Proceed on a folder the system manages. You are still asked to confirm; `--yes` alone is not enough |
+| `--allow-outside-root` | off | Let the journal put files back outside this folder. You are still asked to confirm; `--yes` alone is not enough |
 
 A run that finishes with no conflicts or failures is marked restored and won't
 be applied twice. Files deleted since the run are reported as missing and don't
 block completion.
+
+A journal records absolute paths when the run reached other folders, which
+`compare` and `distribute` do. Restoring one of those needs
+`--allow-outside-root`, because a journal is just a file inside the folder:
+one that arrived with a folder from somewhere else could claim a file belongs
+anywhere on the disk. Without the flag those records are listed and left
+alone, and everything inside the folder is still restored.
 
 ## `mcp`
 

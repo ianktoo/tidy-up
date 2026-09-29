@@ -363,6 +363,9 @@ fn restore_flow(root: &Path, session: &Session) -> Result<()> {
         ConflictPolicy::Rename,
         session.dry_run,
         false,
+        // The menu never reaches outside the folder being restored; someone
+        // who needs that can say so on the command line.
+        false,
     )
 }
 

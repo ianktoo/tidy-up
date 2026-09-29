@@ -169,6 +169,37 @@ round trip.
 - The CLI tests run the real binary with no terminal attached, so they also verify that nothing
   prompts without `--yes`.
 
+## Security-sensitive changes
+
+Some of this code exists only to stop content inside a folder deciding what
+tidy-up does to it. If you touch any of the following, read
+[SECURITY.md](SECURITY.md) first and add a test that states the attack:
+
+| Area | The rule it enforces |
+|---|---|
+| `src/safety.rs` | Which folders are refused, and the path matching that decides |
+| `src/config.rs` | A policy is never read from the folder being processed |
+| `src/api.rs` (`PlanFile::into_plan`) | A plan may only touch paths inside its own root |
+| `src/mcp.rs` | Confinement to `--root`, and that an agent supplies no paths |
+| `src/restore.rs` | A journal may not send files outside the folder being restored |
+
+Four rules, in short. Configuration found in a folder may lower the bar, never
+raise it. An interface where the caller cannot name a resource beats one that
+validates names. A refusal is stated, never silent. And `--yes` answers a
+confirmation but never authorises anything.
+
+`tests/security.rs` is where an attack is written out as a test. Two habits are
+worth copying from what is already there:
+
+* **Prove the fix against the original attack**, not against a paraphrase of it.
+  Both tests there construct a real crafted journal and assert the escaped file
+  does not come into existence.
+* **Test that a setting changes behaviour**, not just that it parses. Two
+  settings have shipped parsed and unenforced, and both were found by running
+  the tool rather than by reading it. A permission that parses but does nothing
+  is worse than one that is absent, because the installation believes it is
+  restricted.
+
 ## Style
 
 - `cargo fmt` and a clean `cargo clippy --all-targets` (CI enforces both).

@@ -1,6 +1,6 @@
 //! `tidy-up restore` and `tidy-up history`
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 use console::style;
@@ -50,6 +50,7 @@ pub fn run(args: &RestoreArgs) -> Result<Outcome> {
             args.on_conflict,
             args.dry_run,
             args.yes,
+            args.allow_outside_root,
         )?;
     }
     if !active.is_empty() {
@@ -62,12 +63,65 @@ pub fn run(args: &RestoreArgs) -> Result<Outcome> {
 }
 
 /// Confirms and undoes a single journal, printing a full account of the result.
+/// Whether this journal may put files back outside the folder being restored,
+/// asking first if it wants to.
+///
+/// `compare` and `distribute` legitimately record absolute paths in the other
+/// folders they were given, and restoring one has to reach them. But a journal
+/// is a file inside the folder, so a folder obtained from somewhere else can
+/// carry one claiming a file belongs anywhere on the disk. The destinations are
+/// therefore shown and confirmed rather than assumed.
+///
+/// `--yes` on its own does not reach this: `--allow-outside-root` is the
+/// deliberate act, exactly as `--allow-system-folder` is for the guard. With
+/// the flag, `--yes` answers the confirmation as it does everywhere else.
+fn allow_outside_root(root: &Path, journal: &Journal, permitted: bool, yes: bool) -> Result<bool> {
+    let outside: Vec<PathBuf> = journal
+        .moves()
+        .map(|(from, _, _)| root.join(from))
+        .filter(|p| p.is_absolute() && !p.starts_with(root))
+        .collect();
+    if outside.is_empty() {
+        return Ok(false);
+    }
+    ui::heading("Careful");
+    ui::danger(&format!(
+        "This run recorded {} outside {}.",
+        ui::plural(outside.len(), "item"),
+        root.display()
+    ));
+    ui::hint("That is normal for a `compare` or `distribute` across folders.");
+    ui::hint("It is not normal for a folder you got from somewhere else: a journal");
+    ui::hint("is just a file, and one can claim a file belongs anywhere on the disk.");
+    for path in outside.iter().take(5) {
+        ui::hint(&format!("  {}", path.display()));
+    }
+    if outside.len() > 5 {
+        ui::hint(&format!("  … and {} more", outside.len() - 5));
+    }
+    if !permitted {
+        ui::hint("Pass --allow-outside-root to put them back as well.");
+        ui::info("Leaving them. Everything inside the folder is still restored.");
+        return Ok(false);
+    }
+    // Same shape as the system-folder guard: the flag is the deliberate act
+    // and gets you to the question, `--yes` answers it, and `--yes` on its own
+    // is not enough. Agreeing to restore a folder is not agreeing to write
+    // outside it; saying so explicitly is.
+    if !ui::confirm("Put those back too?", false, yes)? {
+        ui::info("Leaving them. Everything inside the folder is still restored.");
+        return Ok(false);
+    }
+    Ok(true)
+}
+
 pub fn restore_one(
     root: &Path,
     journal: &mut Journal,
     conflict: ConflictPolicy,
     dry_run: bool,
     yes: bool,
+    allow_outside: bool,
 ) -> Result<()> {
     if journal.is_restored() {
         bail!("run {} was already restored", journal.header.id);
@@ -85,7 +139,11 @@ pub fn restore_one(
     }
 
     let bar = ui::progress_bar(journal.records.len(), "Restoring");
-    let options = RestoreOptions { conflict, dry_run };
+    let options = RestoreOptions {
+        conflict,
+        dry_run,
+        allow_outside: allow_outside_root(root, journal, allow_outside, yes)?,
+    };
     let report = restore(root, journal, options, |done, _| {
         bar.set_position(done as u64)
     });
@@ -112,10 +170,14 @@ fn print_report(root: &Path, report: &RestoreReport, dry_run: bool) {
             ui::hint(&format!("{} → {}", ui::rel(root, from), ui::rel(root, to)));
         }
     }
-    let problems: [(&str, Vec<String>); 3] = [
+    let problems: [(&str, Vec<String>); 4] = [
         (
             "left in place, original name is taken (use --on-conflict rename)",
             report.conflicts.iter().map(|p| ui::rel(root, p)).collect(),
+        ),
+        (
+            "left alone because they belong outside this folder",
+            report.outside.iter().map(|p| ui::rel(root, p)).collect(),
         ),
         (
             "missing (deleted or purged) and skipped",

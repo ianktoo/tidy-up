@@ -273,7 +273,7 @@ fn compare_move_then_restore_round_trip() {
     assert!(a.join("_Duplicates/Group-001").is_dir());
     assert!(stdout(&out).contains("tidy-up restore"));
 
-    let out = tidy(&["restore", s(&a), "--yes"]);
+    let out = tidy(&["restore", s(&a), "--yes", "--allow-outside-root"]);
     assert!(
         out.status.success(),
         "{}",
@@ -562,7 +562,7 @@ fn distribute_moves_by_ratio_and_restore_undoes_it() {
     let history = tidy(&["history", s(&d1)]);
     assert!(stdout(&history).contains("distribute"));
 
-    let out = tidy(&["restore", s(&d1), "--yes"]);
+    let out = tidy(&["restore", s(&d1), "--yes", "--allow-outside-root"]);
     assert!(
         out.status.success(),
         "{}",

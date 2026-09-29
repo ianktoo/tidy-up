@@ -517,6 +517,9 @@ impl Server {
         let options = crate::restore::RestoreOptions {
             conflict: crate::restore::ConflictPolicy::Rename,
             dry_run: false,
+            // Never over this interface: the server is confined to its root,
+            // and a journal is a file an agent may have been pointed at.
+            allow_outside: false,
         };
         let report = crate::restore::restore(&root, &mut journal, options, |_, _| {})
             .map_err(|e| e.to_string())?;

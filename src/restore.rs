@@ -28,6 +28,14 @@ pub enum ConflictPolicy {
 pub struct RestoreOptions {
     /// Behaviour when the original path is taken.
     pub conflict: ConflictPolicy,
+    /// Allow the journal to put files back outside the folder being restored.
+    ///
+    /// A journal from `compare` or `distribute` legitimately records absolute
+    /// paths in the other folders involved, and restoring one has to reach
+    /// them. But a journal is a file inside the folder, so a folder obtained
+    /// from somewhere else can carry one that claims a file belongs anywhere
+    /// on the disk. Off by default; the command layer asks first.
+    pub allow_outside: bool,
     /// Compute and report what would happen without touching anything.
     pub dry_run: bool,
 }
@@ -49,12 +57,31 @@ pub struct RestoreReport {
     pub dirs_removed: usize,
     /// Folders the run had deleted, put back (only `reorganize` deletes any).
     pub dirs_created: usize,
+    /// Records refused because they would have written outside the folder.
+    pub outside: Vec<PathBuf>,
 }
 
 impl RestoreReport {
     /// `true` if everything that could be restored was.
     pub fn is_clean(&self) -> bool {
-        self.conflicts.is_empty() && self.problems.is_empty()
+        self.conflicts.is_empty() && self.problems.is_empty() && self.outside.is_empty()
+    }
+}
+
+/// Whether `path` stays inside `root` once the filesystem has its say.
+///
+/// Two ways out have to be closed at once. A journal path may be absolute,
+/// which `Path::join` honours by discarding the root entirely; and a relative
+/// path may cross a symbolic link planted in the folder. Both are checked on
+/// the deepest ancestor that exists, because the destination itself usually
+/// does not yet.
+fn inside(root: &Path, path: &Path) -> bool {
+    let anchor = path.ancestors().find(|p| p.exists()).unwrap_or(path);
+    match (fs::canonicalize(anchor), fs::canonicalize(root)) {
+        (Ok(anchor), Ok(root)) => anchor.starts_with(root),
+        // Unresolvable means unverifiable, and an unverifiable destination is
+        // not one to write to.
+        _ => false,
     }
 }
 
@@ -79,6 +106,12 @@ pub fn restore(
             Record::Move { from, to, .. } => {
                 let current = root.join(to);
                 let original = root.join(from);
+                // The journal says where this belongs. It is a file inside the
+                // folder, so what it says is not automatically trustworthy.
+                if !options.allow_outside && !inside(root, &original) {
+                    report.outside.push(from.clone());
+                    continue;
+                }
                 if fs::symlink_metadata(&current).is_err() {
                     report.missing.push(to.clone());
                     continue;
@@ -113,13 +146,17 @@ pub fn restore(
             // Put back a folder the run emptied and deleted. Records are replayed
             // newest first, so this happens before anything moves back into it.
             Record::DirRemoved { path }
-                if !options.dry_run && fs::create_dir_all(root.join(path)).is_ok() =>
+                if !options.dry_run
+                    && (options.allow_outside || inside(root, &root.join(path)))
+                    && fs::create_dir_all(root.join(path)).is_ok() =>
             {
                 report.dirs_created += 1;
             }
             // `remove_dir` only succeeds on an empty folder, which is exactly what we want.
             Record::DirCreated { path }
-                if !options.dry_run && fs::remove_dir(root.join(path)).is_ok() =>
+                if !options.dry_run
+                    && (options.allow_outside || inside(root, &root.join(path)))
+                    && fs::remove_dir(root.join(path)).is_ok() =>
             {
                 report.dirs_removed += 1;
             }
@@ -259,6 +296,7 @@ mod tests {
         let options = RestoreOptions {
             conflict: ConflictPolicy::Skip,
             dry_run: false,
+            allow_outside: false,
         };
         let report = run(dir.path(), &id, options);
         assert_eq!(report.conflicts.len(), 1);
