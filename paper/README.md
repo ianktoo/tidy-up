@@ -4,13 +4,9 @@
 Reversible Re-grouping*, by Ian Too
 ([ORCID 0009-0000-4888-1941](https://orcid.org/0009-0000-4888-1941)).
 
-**Scope: this paper describes the work released in 0.2.0.** The machine interface,
-the `show` review surface, the MCP server and the policy file came afterwards and are
-not covered yet.
-
-The paper documents the safety, survivability, re-grouping and observability work in
-this repository: what was built, why each choice was made, what was deliberately left
-out, and how each property is tested.
+The paper documents the safety, survivability, re-grouping, observability and agent
+delegation work in this repository, through release 0.3.0: what was built, why each
+choice was made, what was deliberately left out, and how each property is tested.
 
 ## Building
 
@@ -33,7 +29,7 @@ Any of the three engines works. The preamble detects which one is running:
   same transliteration rather than failing.
 
 Both paths are verified: on the author's machine, pdfLaTeX and LuaLaTeX each produce
-19 pages with zero errors, zero warnings and zero missing glyphs.
+26 pages with zero errors, zero warnings and zero missing glyphs.
 
 `orcidlink` is used for the ORCID mark when installed, and a plain hyperlink otherwise,
 so no package outside a standard TeX distribution is required.
@@ -44,8 +40,8 @@ Every number comes from this repository at the commit the paper describes:
 
 | Figure | Source |
 |---|---|
-| 363 tests, zero failures | `cargo test` |
+| 455 tests, zero failures | `cargo test` |
 | Zero lint warnings | `cargo clippy --all-targets` |
 | 10 direct / 54 transitive dependencies | `cargo tree` |
-| 6,195 lines added | `wc -l` over the modules listed in the availability section |
-| 2.24 MiB release binary | `cargo build --release` (LTO, stripped) |
+| 10,265 lines added | `wc -l` over the modules listed in the availability section |
+| 2.68 MiB release binary | `cargo build --release` (LTO, stripped) |

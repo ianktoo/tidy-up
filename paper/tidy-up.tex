@@ -146,10 +146,10 @@
 
 % ------------------------------------------------------------------ metadata
 \hypersetup{
-  pdftitle={Guarded Bulk File Reorganization: System-Directory Detection, Survivable Execution, and Reversible Re-grouping},
+  pdftitle={Guarded Bulk File Reorganization: System-Directory Detection, Survivable Execution, Reversible Re-grouping, and Safe Delegation to Autonomous Agents},
   pdfauthor={Ian Too},
   pdfsubject={Systems software; file management; software safety},
-  pdfkeywords={file system, safety, cross-platform, Rust, undo, observability},
+  pdfkeywords={file system, safety, cross-platform, Rust, undo, observability, agents, capability security, Model Context Protocol},
 }
 
 \begin{document}
@@ -157,8 +157,8 @@
 % =============================================================================
 \begin{center}
   {\LARGE\bfseries Guarded Bulk File Reorganization:\\[0.25em]
-   System-Directory Detection, Survivable Execution,\\[0.25em]
-   and Reversible Re-grouping\par}
+   System-Directory Detection, Survivable Execution, Reversible\\[0.25em]
+   Re-grouping, and Safe Delegation to Autonomous Agents\par}
   \vspace{1.4em}
   {\large Ian Too\orcidmark{0009-0000-4888-1941}\par}
   \vspace{0.4em}
@@ -197,14 +197,28 @@ cannot be undone. Fourth, an \emph{idempotent re-grouping algorithm} that unpack
 arbitrarily nested directory tree and re-files it under an ordered list of grouping
 keys, computes which directories the operation will empty, and records their removal
 so that undo restores the original tree exactly, including directories that held
-nothing. The implementation adds 6{,}195 lines across ten modules and introduces
+nothing. Fifth, an account of \emph{delegating filesystem mutation to an
+autonomous agent}, which we argue is admissible only where every action is
+reviewable before it happens and reversible after. We contrast two interface
+shapes for such delegation, validating the operations an agent names against
+never letting it name one, and report that the second is strictly stronger,
+because validation must anticipate every way a path can escape a root while
+the alternative admits no path at all. Applying that to a Model Context
+Protocol server yields an interface in which indirect prompt injection has no
+argument to express itself through. We further report a structural limit of
+journal-based undo: a journal records transitions, so it can answer neither
+\enquote{what was left untouched} nor \enquote{can this still be undone},
+both of which a reviewer needs.
+The implementation adds 10{,}265 lines across sixteen modules and introduces
 \emph{zero} new dependencies, keeping the transitive dependency count at 54 crates.
-An evaluation over 363 automated tests reports the properties each mechanism is
-designed to guarantee, including a byte-for-byte reorganize/undo round trip and the
-non-overridability of a genuine permission wall.
+An evaluation over 455 automated tests reports the properties each mechanism is
+designed to guarantee, including a byte-for-byte reorganize/undo round trip, the
+non-overridability of a genuine permission wall, and the refusal of a plan that
+reaches outside its own root.
 \\[0.6em]
 \textbf{Keywords:} file system safety; bulk reorganization; cross-platform systems;
-capability probing; idempotence; reversible operations; observability; Rust.
+capability security; agent tool design; prompt injection; idempotence;
+reversible operations; observability; Rust.
 \\[0.3em]
 \rule{\textwidth}{0.8pt}
 \end{minipage}
@@ -286,6 +300,15 @@ the mechanism's purpose. This observation drove two design decisions reported in
     (\Cref{sec:survival}).
   \item An idempotent, reversible re-grouping algorithm, including the computation of
     directories emptied by a run and their restoration on undo (\Cref{sec:regroup}).
+  \item An account of delegating filesystem mutation to an autonomous agent: a
+    machine interface whose exit codes separate a refusal from a failure, the
+    argument that an interface in which an agent cannot name a path is
+    strictly stronger than one that validates the paths it names, and a
+    configuration model in which discovered settings may lower the bar but
+    never raise it (\Cref{sec:agent}).
+  \item The observation that journal-based undo cannot, structurally, answer
+    the two questions a reviewer most needs, and what has to be added to it
+    (\Cref{sec:agent:review}).
   \item An evaluation, and an account of the engineering constraint --- zero new
     dependencies --- that shaped every one of these designs (\Cref{sec:eval}).
 \end{enumerate}
@@ -336,6 +359,24 @@ view and is set on entirely ordinary directories such as \code{Documents}.
 The technique of resolving this by attempting the operation is folklore in systems
 programming rather than a published result. We adopt it, scope it carefully so that it
 never runs when the caller promised not to write, and report its behaviour.
+
+\subsection{Capability security and agent tools}
+
+The distinction drawn in \Cref{sec:agent:capability} between validating a name
+and holding an unforgeable reference is the capability-security distinction,
+which is old \cite{dennis1966} and was developed at length by Miller
+\cite{miller2006}. The confused-deputy problem \cite{hardy1988} is the
+canonical failure of the alternative: authority exercised on behalf of a caller
+who should not have had it, because the request named a resource rather than
+presenting a right to it.
+
+What is comparatively new is the caller. Tool-using language models introduce a
+caller that composes requests from text it was given, and that text may be
+adversarial without the operator knowing: the indirect prompt injection setting
+described by Greshake and colleagues \cite{greshake2023}. Our contribution here
+is not the principle but a worked application of it to a destructive filesystem
+tool, and the observation that a plan/execute split maintained for testability
+turns out to supply exactly the unforgeable reference such an interface needs.
 
 \subsection{Reversible file operations}
 
@@ -390,11 +431,19 @@ remember & \code{journal} & append-only undo log & 461 \\
 \midrule
 observe\,$^\dagger$ & \code{obs} & JSON Lines run record & 608 \\
 \midrule
+report\,$^\ddagger$ & \code{api} & JSON envelope, exit codes, plan files & 1{,}016 \\
+\midrule
+delegate\,$^\ddagger$ & \code{mcp} & Model Context Protocol server & 1{,}085 \\
+\midrule
+permit\,$^\ddagger$ & \code{config} & policy ceiling and default floor & 807 \\
+\midrule
+review\,$^\ddagger$ & \code{commands::show} & what one run did, and if it can be undone & 476 \\
+\midrule
 present\,$^\dagger$ & \code{commands::session} & menu-settable equivalents of the flags & 371 \\
 \midrule
 present & \code{cli}, \code{commands}, \code{ui} & arguments, flows, terminal & 1{,}700 \\
 \bottomrule
-\multicolumn{4}{@{}l@{}}{\footnotesize $^\dagger$ introduced by this work}
+\multicolumn{4}{@{}l@{}}{\footnotesize $^\dagger$ introduced for 0.2.0 \quad $^\ddagger$ introduced for 0.3.0 (\Cref{sec:agent})}
 \end{tabularx}
 \end{table}
 
@@ -1144,6 +1193,214 @@ compiled binary rather than in parallel against isolated instances. We consider 
 the right trade at this scale and would revisit it if the library were embedded.
 
 % =============================================================================
+\section{Delegating to an autonomous agent}
+\label{sec:agent}
+
+The mechanisms so far protect a person from a mistake. This section is about a
+different caller: a program that decides what to do without being told each
+time. The distinction matters because an agent acts in bulk, acts quickly, and
+acts on text it was given, which may not have come from the person it is
+working for.
+
+Everything here is built on a property the earlier work already had, and which
+we think is the precondition for delegating filesystem mutation at all:
+\emph{every action can be reviewed before it happens and reversed after}. A
+\code{Plan} is pure data (\Cref{sec:overview}), and every change is journaled
+(\Cref{sec:regroup:undo}). Without both, no amount of interface design makes
+this safe; with both, the remaining question is what the agent is allowed to
+express.
+
+\subsection{A machine interface}
+\label{sec:agent:api}
+
+Every command accepts \code{--json} and prints exactly one object on standard
+output, whatever happened:
+
+\begin{lstlisting}[style=shell]
+{"tidy_up":"0.3.0","format":1,"command":"organize","status":"ok","outcome":{...}}
+\end{lstlisting}
+
+The human and machine renderings are two views of one value, not two
+implementations: a command returns an \code{Outcome} and the caller decides how
+to render it. Keeping one model is what stops the two drifting.
+
+Making that reliable required a single choke point rather than a guard at each
+call site. A \code{out!} macro replaces every prose \code{println!} in the
+crate, and progress bars are suppressed. Guarding each site individually would
+have worked on the day and failed silently the next time somebody added a
+print, which is the failure mode worth designing against.
+
+\paragraph{Exit codes distinguish a refusal from a failure.}
+Previously every non-success exited \code{1}. A caller cannot act on that: a
+refusal is an answer and must not be retried, whereas a transient failure might
+reasonably be. \Cref{tab:exits} gives the mapping. To make it honest, refusals
+are \emph{typed} rather than worded: a \code{Refused} error carries an
+\code{ErrorCode}, and both the exit code and the JSON error derive from it. An
+earlier version decided the run-log status by testing whether the message began
+with \enquote{refusing}, which is the kind of thing that survives until somebody
+rewords a string.
+
+\begin{table}[t]
+\centering
+\small
+\caption{Exit codes. \code{3} is the one that did not exist before.}
+\label{tab:exits}
+\begin{tabularx}{\textwidth}{@{}l X@{}}
+\toprule
+\textbf{Code} & \textbf{Meaning} \\
+\midrule
+\code{0} & Success, including \enquote{nothing to do}, a cancelled confirmation, and a run that skipped items it could not process \\
+\code{1} & Something went wrong and stopped the run \\
+\code{2} & The arguments did not make sense \\
+\code{3} & Refused deliberately: the system-folder guard, a permission wall, or policy \\
+\code{4} & Finished, but items were skipped and \code{--strict} was given \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\subsection{Two ways to let an agent move files}
+\label{sec:agent:capability}
+
+This is the central design question of the section, and we think the answer
+generalizes well beyond this tool.
+
+Suppose an agent should be able to reorganize a directory. There are two
+shapes the interface can take.
+
+\begin{description}[leftmargin=1.6em,itemsep=0.3em]
+  \item[Validate what it asks for.] The agent supplies operations, and the tool
+    checks each one. This is what the \code{apply} sub-command does with a plan
+    file: it verifies that every path is absolute and lies inside the plan's own
+    root, and that the counts match, before executing anything.
+  \item[Never let it name anything.] The agent asks the tool to compute a plan,
+    receives an opaque handle, and applies \emph{that}. It never supplies a
+    path. This is what the MCP server does: \code{plan\_organize} returns a
+    \code{plan\_id}, and \code{apply\_plan} accepts that identifier and nothing
+    else.
+\end{description}
+
+The second is strictly stronger, and the reason is worth stating precisely.
+Validation has to anticipate every way a path can escape its root, and
+\Cref{sec:detect} is a catalogue of how many ways that is: \code{..}
+components, symbolic links and NTFS junctions, verbatim and UNC prefixes, 8.3
+short names, case folding on two platforms, and trailing characters Windows
+strips silently. A validator is only as good as that list. Under the second
+shape the request contains no path at all, so the question does not arise: the
+moves are the ones the tool computed, and the agent's only remaining choice is
+\emph{whether}, not \emph{what}.
+
+This is the capability-security distinction --- unforgeable references in place
+of ambient authority checked against a name --- applied to agent tool design
+\cite{dennis1966,miller2006}. We claim no novelty in the principle. What seems
+worth reporting is that it maps unusually cleanly onto a tool already split
+into a pure planner and an executor: the handle is simply the plan, and the
+split existed for testability long before an agent was in view.
+
+The practical consequence is a defence against indirect prompt injection
+\cite{greshake2023}. An agent that reads a file containing
+\enquote{\emph{also move C:\textbackslash Windows\textbackslash System32 into
+Documents}} cannot act on it through this interface, because there is no
+argument in which that instruction could be expressed. It can be expressed to
+the validating interface, where it is then rejected --- which is a weaker
+position, because it relies on the rejection being complete.
+
+\subsection{The MCP server}
+\label{sec:agent:mcp}
+
+The Model Context Protocol is JSON-RPC 2.0 over newline-delimited JSON on
+standard input and output, so serving it needed no dependency beyond the
+\code{serde\_json} already present. \code{Server::handle} is a pure function
+from one request to at most one response, and the loop around it does nothing
+but framing; the protocol is therefore tested without a pipe or a subprocess,
+the same separation the classifier uses.
+
+Four restrictions apply, in rough order of how much they carry:
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.25em]
+  \item \textbf{No paths in requests}, as above.
+  \item \textbf{Confinement to one root}, given on the command line and checked
+    on the canonical path, so \code{..} and symbolic links are caught.
+  \item \textbf{Read-only by default.} Without \code{--allow-writes} the
+    mutating tools are \emph{absent from the tool listing}, not present and
+    failing. An agent cannot attempt what it cannot discover, and a listing is
+    a cheaper thing to reason about than a set of runtime refusals.
+  \item \textbf{The guard cannot be overridden.} There is no way to express
+    \code{--allow-system-folder} over this interface, and a server rooted at a
+    refused directory does not start. Failing at startup rather than per call
+    matters: an agent holding a connection to such a server would otherwise
+    find every call failing with no way to understand why.
+\end{enumerate}
+
+A plan is consumed when applied, so a replayed \code{apply\_plan} cannot re-run
+moves against a directory that has since changed. Large plans are returned as a
+50-move sample with a truncation flag, because a response of ten thousand
+entries helps no reader, human or otherwise.
+
+\subsection{The review surface}
+\label{sec:agent:review}
+
+Delegation is only acceptable if the delegation can be checked, and checking
+was the weakest part of the system: \code{history} listed runs and nothing
+explained one. Reading a journal meant opening its JSON Lines file.
+
+Building \code{show} surfaced a structural point about journal-based undo.
+\emph{Two of the three things a reviewer wants are not in the journal, and
+cannot be.}
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=0.25em]
+  \item \textbf{Whether each item is still where the run put it} must be
+    determined at review time, because the directory keeps changing after the
+    run. This is the question that actually matters, since it is the difference
+    between an undo that is clean and one that reports items as missing. The
+    report marks each moved-on item.
+  \item \textbf{What the run left alone} can never be in a journal, because a
+    journal records changes. It comes from the optional run log
+    (\Cref{sec:obs}), and its absence is reported as silence rather than as an
+    error, since most runs are not logged.
+  \item Timing, which the journal does have.
+\end{enumerate}
+
+So \code{show} is not a journal pretty-printer; it is a journal, plus a live
+filesystem check, plus a separate log. We suspect this generalizes to any
+journal-based undo facility: the journal is a record of a transition, and a
+reviewer is asking about a state.
+
+\subsection{Configuration: a ceiling and a floor}
+\label{sec:agent:config}
+
+An agent-facing tool needs configuration for a different reason than a
+human-facing one. A person wants to avoid retyping flags; an agent does not
+care. What an installation needs is a statement of what it \emph{permits},
+which the caller cannot override.
+
+The file therefore holds two things with opposite semantics. A \textbf{policy}
+is a ceiling: permitted roots, whether writes are allowed at all, whether
+deletion is, whether the override flag exists, and a cap on scan depth. Flags
+cannot raise it. \textbf{Defaults} are a floor: ignore rules, depth, grouping
+keys. Any flag overrides them.
+
+\paragraph{Discovery is deliberately asymmetric.}
+A policy is read only from a path the operator named, via \code{--config} or an
+environment variable, and is never discovered. Defaults may additionally come
+from a \code{.tidy-up.json} inside the directory being processed, which is
+convenient and travels with the directory; a policy found there is discarded.
+
+The asymmetry is the security property. If a policy could be discovered from
+the directory being processed, then unpacking an archive and tidying it would
+let the archive decide what may be done to it --- a confused-deputy arrangement
+\cite{hardy1988} in which the tool's authority is directed by the data it was
+pointed at. The rule we extracted is short enough to apply elsewhere:
+\emph{auto-discovered configuration may lower the bar for convenience; it may
+never raise it for permission.}
+
+Two smaller decisions follow the same instinct. Passing a flag that policy
+forbids is an \emph{error}, not a silent no: the caller believes they have
+authorized something, and learning otherwise afterwards is worse than being
+told. And an unrecognized field is rejected rather than ignored, because
+\code{allow\_system\_folder} for \code{allow\_system\_folders} would otherwise
+leave an installation believing it was locked down when it was not.
+
+% =============================================================================
 \section{Evaluation}
 \label{sec:eval}
 
@@ -1158,24 +1415,27 @@ counts.
 \begin{table}[t]
 \centering
 \small
-\caption{Test suite. 363 tests, zero failures, zero \code{clippy} warnings at
+\caption{Test suite. 455 tests, zero failures, zero \code{clippy} warnings at
 \code{--all-targets}, on both stable Rust and the declared minimum of 1.85.}
 \label{tab:tests}
 \begin{tabularx}{\textwidth}{@{}l r X@{}}
 \toprule
 \textbf{Suite} & \textbf{Tests} & \textbf{Scope} \\
 \midrule
-unit (in-crate)        & 268 & classifier corpus, probes, planners, taxonomy, log format, menu options \\
+unit (in-crate)        & 331 & classifier corpus, probes, planners, taxonomy, log and JSON formats, MCP protocol, policy \\
 \code{tests/cli}       & 30  & pre-existing command-line behaviour (regression) \\
 \code{tests/workflow}  & 23  & scan $\rightarrow$ plan $\rightarrow$ execute $\rightarrow$ journal $\rightarrow$ restore \\
 \code{tests/reorganize}& 11  & re-grouping, idempotence, undo round trip \\
 \code{tests/safety}    & 11  & guard policy through the compiled binary \\
+\code{tests/api}       & 10  & envelope shape, exit codes, propose/apply, plan trust boundary \\
+\code{tests/config}    & 10  & policy ceiling, defaults floor, the folder-config attack \\
+\code{tests/show}      & 8   & review surface, clean versus partial undo \\
 \code{tests/logging}   & 7   & run log content, joins, degradation, \code{--strict} \\
 \code{tests/cross\_volume} & 5 & cross-partition moves (environment-gated) \\
 \code{tests/scripts}   & 3   & installer scripts \\
-doc-tests              & 5   & every documented example compiles and runs \\
+doc-tests              & 6   & every documented example compiles and runs \\
 \midrule
-\textbf{Total}         & \textbf{363} & \\
+\textbf{Total}         & \textbf{455} & \\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -1243,13 +1503,41 @@ directory structure separately from file contents is what gives the test power o
 the \code{DirRemoved} record; a files-only comparison would pass even if every empty
 directory were lost.
 
+\subsection{The delegation interface}
+\label{sec:eval:agent}
+
+The MCP server is exercised through \code{Server::handle} directly, since it is
+a pure function of a request, with 18 tests covering the handshake and version
+negotiation, notifications receiving no reply, tool errors arriving as results
+rather than protocol failures, and the full plan/apply/review/undo cycle.
+
+Four of them are the safety argument of \Cref{sec:agent:capability} stated as
+assertions. One confirms that \code{apply\_plan} advertises exactly one input
+property, \code{plan\_id}, so the interface admits no path. One confirms that
+an invented handle is refused. One confirms a plan cannot be applied twice.
+The fourth attempts four escapes from the server root --- \code{..}, a
+trailing-separator variant, an absolute path elsewhere, and on Unix a symbolic
+link planted inside the root pointing out of it --- and requires all four to be
+refused.
+
+The plan file interface, being the weaker of the two shapes, is tested
+adversarially in kind: a proposed plan is rewritten so that one destination is
+\code{C:\textbackslash Windows}, and the test requires both that the run is
+refused and that the target does not come into existence.
+
+For configuration, the corresponding test writes a \code{.tidy-up.json} into a
+directory that the operator's policy does \emph{not} permit, claiming in it
+that the directory is permitted and that system folders are allowed, then
+requires the run to be refused anyway. That is the confused-deputy scenario of
+\Cref{sec:agent:config} reduced to a test case.
+
 \subsection{Dependency footprint}
 \label{sec:eval:deps}
 
 \begin{table}[t]
 \centering
 \small
-\caption{Dependency footprint before and after this work.}
+\caption{Dependency footprint before this work and at release 0.3.0.}
 \label{tab:deps}
 \begin{tabular}{@{}l r r@{}}
 \toprule
@@ -1257,9 +1545,9 @@ directory were lost.
 \midrule
 Direct dependencies            & 10 & 10 \\
 Unique transitive crates       & 54 & 54 \\
-Stripped release binary        & 2.19\,MiB & 2.24\,MiB \\
+Stripped release binary        & 2.19\,MiB & 2.68\,MiB \\
 New dependencies added         & \multicolumn{2}{c}{0} \\
-Lines added (implementation + tests) & \multicolumn{2}{c}{6{,}195} \\
+Lines added (implementation + tests) & \multicolumn{2}{c}{10{,}265} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1285,6 +1573,12 @@ otherwise have gone differently:
 
 We report items 2 and 3 as genuine reductions in capability accepted in exchange for a
 stated property of the artifact, not as free wins.
+
+The binary grew by roughly half a megabyte across both releases, which is the
+cost of the code itself rather than of anything linked in: the dependency
+graph is the same 54 crates it was before any of this started. For comparison,
+the single rejected dependency of item~1 was estimated at a similar size on
+its own.
 
 \subsection{What continuous integration caught}
 \label{sec:eval:ci}
@@ -1313,7 +1607,19 @@ version}. Ten sites used \code{let} chains, stabilized in 1.88, and one used
 a developer on current stable. A declared MSRV is a compatibility claim like any
 other and needs a job that checks it.
 
-Third, \textbf{two integration tests encoded assumptions about the developer's
+Third, \textbf{a defect from reading the clock twice}. The run log and the
+undo journal each mint an identifier from a separate call to
+\code{compact\_id(now\_secs())}, on the assumption they would agree. A run that
+crosses a one-second boundary between starting and opening its journal ends up
+with two, and \code{show} was locating the log by the journal's name. It
+therefore reported nothing about what the run left alone --- indistinguishable,
+to a reader, from a run that was never logged. Only the musl job happened to be
+unlucky in the second that mattered. The fix matches on the identifier the log
+already records, and the general lesson is that two clock reads are two values:
+if one artifact must refer to another, it should say so rather than be named
+after it.
+
+Fourth, \textbf{two integration tests encoded assumptions about the developer's
 machine}: one required the home directory to contain loose files, which a fresh CI
 runner's does not, and one compared a directory listing that a parallel test was
 concurrently modifying.
@@ -1383,6 +1689,23 @@ principle be replaced before the operation proceeds. We consider this acceptable
 guard defends against user error, not against a local adversary who could simply run
 the tool themselves.
 
+\subsection{What the delegation argument does and does not claim}
+
+We are not claiming that an agent driving this tool is safe in general. We are
+claiming something narrower and, we think, checkable: that of the two available
+interface shapes, one admits a class of attack the other cannot express, and
+that the stronger one costs little when a plan/execute split already exists.
+
+Three limits are worth stating. The argument concerns the \emph{interface}, not
+the agent: an agent authorized to apply plans can still apply a reasonable-looking
+plan for a bad reason, and the defence against that is the review surface and
+the undo journal rather than the interface shape. The confinement root is
+resolved once at startup, so a directory replaced beneath a long-running server
+is a time-of-check hazard of the same kind noted in \Cref{sec:discussion}.
+And the server holds plans in memory, so a restart invalidates outstanding
+handles: correct, but it makes the handle a session capability rather than a
+durable one, which an orchestrator would need to revisit.
+
 \subsection{Generality}
 
 The mechanisms are not specific to file organizers. The pure-classifier-plus-facts
@@ -1391,6 +1714,19 @@ platform-as-parameter technique applies to any cross-platform path logic and is,
 think, underused; the survival taxonomy with one stated fatal exception applies to any
 bulk operation; and the observation that a move journal cannot express directory
 deletion applies to any reversible operation that removes containers.
+
+\subsection{An orchestrator, and why it is not here}
+
+The natural next step, running tidy-up across a fleet from one client, was
+designed and deliberately not built. A tool that moves files as a privileged
+user and is reachable over a network is close to remote code execution, and the
+security model is the architecture rather than a layer over it. Two decisions
+would be load-bearing: agents should poll for work rather than accept
+connections, removing the inbound surface entirely; and policy must live on the
+agent, so that a job says \enquote{run profile \emph{photos}} and the agent
+decides what that means and where it may apply. A request that can name a path
+turns the whole arrangement into the weaker of the two shapes in
+\Cref{sec:agent:capability}, fleet-wide.
 
 \subsection{Future work}
 
@@ -1416,15 +1752,29 @@ Protection disagree; a survival architecture with exactly one stated fatal excep
 and an idempotent re-grouping operation whose undo restores directory structure, not
 merely file locations.
 
-Two lessons generalize beyond the artifact. The first is that precision is a safety
+We then took the same question one level further: what changes when the
+caller is not a person. The answer we arrived at is that an interface in which
+an agent cannot name a path is strictly stronger than one that validates the
+paths it names, because the second is only as complete as its author's list of
+ways a path can escape, and \Cref{sec:detect} is evidence that such lists are
+long. A plan/execute split kept for testability turned out to supply exactly
+the unforgeable handle this needs, which is a pleasant accident worth noticing:
+the property was available years before the reason to want it.
+
+Three lessons generalize beyond the artifact. The first is that precision is a safety
 property: a guard that fires on \code{D:\textbackslash Downloads} teaches users to bypass
 it and protects nobody, which is why two plausible rules were deliberately weakened and
-why a negative corpus is part of the test suite rather than an afterthought. The second
+why a negative corpus is part of the test suite rather than an afterthought. The second is that a journal is a record of a transition, so it
+cannot answer questions about a state: \enquote{is this still undoable} and
+\enquote{what was left alone} both need something the journal structurally does
+not hold, which is why the review surface is a journal plus a live check plus a
+log. The third
 is that separating a pure verdict from an impure policy is what made the work testable
 at all --- and that the same separation forced the discovery, in the Rust standard
 library, that \code{std::path} cannot be used to reason about another platform's paths.
 
-The implementation is 6{,}195 lines, adds no dependencies, and passes 363 tests.
+The implementation is 10{,}265 lines, adds no dependencies, and passes 455 tests
+on every platform it ships for and on its declared minimum compiler.
 
 % =============================================================================
 \section*{Availability}
@@ -1433,9 +1783,11 @@ The implementation is 6{,}195 lines, adds no dependencies, and passes 363 tests.
 The implementation is open source at
 \url{https://github.com/ianktoo/tidy-up}, released under the MIT licence together with
 a supplementary end-user licence. The modules described here are \code{src/safety.rs},
-\code{src/outcome.rs}, \code{src/regroup.rs}, \code{src/obs.rs} and
-\code{src/commands/guard.rs}, with tests in the corresponding \code{*\_tests.rs} files
-and in \code{tests/}.
+\code{src/outcome.rs}, \code{src/regroup.rs}, \code{src/obs.rs},
+\code{src/api.rs}, \code{src/mcp.rs}, \code{src/config.rs},
+\code{src/commands/guard.rs} and \code{src/commands/show.rs}, with tests in the
+corresponding \code{*\_tests.rs} files and in \code{tests/}. The work described
+here was released as versions 0.2.0 and 0.3.0.
 
 \section*{Acknowledgements}
 \addcontentsline{toc}{section}{Acknowledgements}
@@ -1448,6 +1800,38 @@ author's own.
 \begin{thebibliography}{99}
 \addcontentsline{toc}{section}{References}
 \small
+
+\bibitem{dennis1966}
+J.~B.~Dennis and E.~C.~Van Horn.
+\newblock Programming semantics for multiprogrammed computations.
+\newblock \emph{Communications of the ACM}, 9(3):143--155, 1966.
+
+\bibitem{miller2006}
+M.~S.~Miller.
+\newblock \emph{Robust Composition: Towards a Unified Approach to Access Control
+  and Concurrency Control}.
+\newblock PhD thesis, Johns Hopkins University, 2006.
+
+\bibitem{hardy1988}
+N.~Hardy.
+\newblock The confused deputy (or why capabilities might have been invented).
+\newblock \emph{ACM SIGOPS Operating Systems Review}, 22(4):36--38, 1988.
+
+\bibitem{greshake2023}
+K.~Greshake, S.~Abdelnabi, S.~Mishra, C.~Endres, T.~Holz, and M.~Fritz.
+\newblock Not what you've signed up for: compromising real-world LLM-integrated
+  applications with indirect prompt injection.
+\newblock In \emph{Proceedings of the 16th ACM Workshop on Artificial
+  Intelligence and Security (AISec)}, 2023.
+
+\bibitem{mcp}
+Anthropic.
+\newblock \emph{Model Context Protocol specification}.
+\newblock \url{https://modelcontextprotocol.io}.
+
+\bibitem{jsonrpc}
+JSON-RPC Working Group.
+\newblock \emph{JSON-RPC 2.0 Specification}, 2010.
 
 \bibitem{posix}
 IEEE and The Open Group.
