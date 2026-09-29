@@ -158,6 +158,12 @@ round trip.
 
 - Unit tests live next to the code they cover.
 - Anything that touches the filesystem uses `tempfile` directories, never real user folders.
+  Integration tests use `common::sandbox()`, which is still `tempfile`-managed but rooted at
+  `~/tidy-up-tests`: the system temporary folder sits inside a protected tree on Windows and
+  macOS, so a guard test using it would pass for the wrong reason.
+- The minimum supported Rust version is enforced in CI. No `let` chains, and check with
+  `cargo +1.85 test --locked --all-targets` before pushing; current stable will not catch it.
+- CI sets `RUSTFLAGS: -D warnings`, so a warning fails the build.
 - Tests must pass on all three platforms. Avoid hard-coded separators (use `Path::join`), and do not
   rely on file ordering, timestamps having sub-second precision, or case-sensitive names.
 - The CLI tests run the real binary with no terminal attached, so they also verify that nothing

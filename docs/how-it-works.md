@@ -3,17 +3,20 @@
 ## Pipeline
 
 ```text
-classify -> scan -> plan -> execute -> journal -> restore
+guard -> classify -> scan -> plan -> execute -> journal -> restore
 ```
 
 | Stage | Module | Responsibility |
 |---|---|---|
+| guard | `safety`, `commands::guard` | Is this a folder the system manages? Detection is pure; the policy that warns, asks or refuses is separate |
+| survive | `outcome` | Classify a per-item failure, record it, carry on |
 | classify | `category`, `rules`, `projects` | What a file is; what to leave alone |
 | scan | `scan` | Walk a folder into eligible files plus skipped entries with reasons |
-| plan | `plan`, `dedupe` | Pure data: a list of `PlannedMove`s. No side effects |
+| plan | `plan`, `dedupe`, `regroup` | Pure data: a list of `PlannedMove`s. No side effects |
 | execute | `executor`, `fsops` | Perform moves without ever overwriting |
 | journal | `journal` | Append-only undo log |
 | restore | `restore` | Replay a journal backwards |
+| observe | `obs` | Optional JSON Lines record of what the run decided |
 | present | `cli`, `commands`, `ui` | Arguments, flows, terminal output |
 
 Because a `Plan` is plain data, `--dry-run`, previews and confirmation prompts
@@ -65,6 +68,42 @@ Records are replayed newest-first. For each `move`:
 
 Only a run that ends with no conflicts and no failures is marked restored.
 
+## The system-folder guard
+
+`safety::classify` is a pure function of the path, the environment and a few probed
+facts, returning `Safe`, `Caution` or `Dangerous` with machine-readable reasons. It
+reads no filesystem and takes the **platform as an argument**, so all three rule
+tables are exercised from any one host.
+
+That last point forced its own path splitter: `std::path` parses for the *build*
+target, so on Linux it reads `C:\Windows` as a single component. Matching is
+component-wise, folds `\\?\` and UNC prefixes, and handles case and the trailing
+dots and spaces Windows silently strips. `C:\Program Files Custom` is not inside
+`C:\Program Files`, and `/usrlocal` is not inside `/usr`.
+
+Whether a folder is writable is settled by trying: a uniquely named file is created
+and removed. Mode bits, ACLs, read-only mounts and macOS System Integrity Protection
+all disagree with one another, and `access(2)` answers a different question. The
+probe runs only for commands about to write, never for a dry run or a reporting
+command, and only once the path rules have failed to produce a refusal, because
+there is no sense writing into a folder already declined.
+
+Policy lives apart from detection, in `commands::guard`: reporting commands warn and
+continue, `Caution` asks, `Dangerous` refuses and names `--allow-system-folder`, and
+a real permission wall is refused even with that flag.
+
+## Surviving a bad disk
+
+`outcome::Problem` carries a path, the operation, a classified `Cause` and a
+message; `Cause::of` interprets `io::ErrorKind` in exactly one place, including the
+Windows sharing-violation codes that have no stable kind of their own. The scan is
+infallible below the root, per-item failures are collected rather than propagated,
+and a panic while processing one file is caught and recorded instead of ending the
+run.
+
+One failure is still fatal, on purpose: a journal write. A change that cannot be
+recorded is a change that cannot be undone, so the move in flight is rolled back.
+
 ## Safety model
 
 - `fsops::move_path` refuses to overwrite. It uses an atomic rename, falling
@@ -72,8 +111,11 @@ Only a run that ends with no conflicts and no failures is marked restored.
   (e.g. across volumes). A failed verification deletes the copy and leaves the original.
 - Destinations are re-checked at execution time, so a file that appears after
   planning is never clobbered.
-- Symlinks are never followed or moved. Hidden and system files are skipped
-  unless requested. On Windows the HIDDEN and SYSTEM attributes count.
+- Symlinks are never followed or moved. Hidden files are skipped unless requested:
+  dot-names everywhere, the HIDDEN attribute on Windows, `UF_HIDDEN` on macOS.
+  Files Windows marks with the SYSTEM attribute are skipped separately and are
+  **not** un-skipped by `--include-hidden`: asking to see dotfiles is not asking to
+  move `pagefile.sys`.
 - Folders created by a previous run (category folders, `Projects`,
   `_Duplicates`) are skipped at the top level, which makes repeated runs idempotent.
 - Names that aren't valid UTF-8 are skipped, since they can't be journaled faithfully.

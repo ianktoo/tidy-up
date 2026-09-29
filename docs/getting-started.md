@@ -48,6 +48,22 @@ folders (or a typed path), then a menu: organize, find duplicates, restore,
 history, purge. It asks about ignored extensions, shortcuts, subfolders and
 projects as it goes.
 
+## When tidy-up says no
+
+Point it at a folder your operating system manages and it refuses before moving
+anything:
+
+```console
+$ tidy-up organize C:\Windows --yes
+error: refusing to change C:\Windows: it looks like a folder the system manages.
+       If you are certain, re-run with --allow-system-folder
+```
+
+Your own home folder counts, because tidying it would move your settings and every
+top-level folder you have. Pick a folder inside it instead. `--yes` does not get you
+past this; `--allow-system-folder` gets you to a confirmation that still defaults to
+no.
+
 ## Recipes
 
 **Desktop, but leave shortcuts and my installers alone** (shortcuts are skipped by default):
