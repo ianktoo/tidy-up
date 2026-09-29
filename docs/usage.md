@@ -9,6 +9,34 @@ Every command takes a folder as its first positional argument; the default is
 the current directory. Aliases: `o` organize, `ro` reorganize, `d` dedupe, `c` compare,
 `a` analyze, `x` distribute, `r` restore, `h` history.
 
+## Global options
+
+These work with any command, before or after it.
+
+| Option | Default | Description |
+|---|---|---|
+| `--log` | off | Write a JSON Lines record of the run to `<folder>/.tidy-up/logs/`. `TIDY_UP_LOG=1` does the same |
+| `--strict` | off | Exit non-zero if anything had to be skipped. Without it, a run that skipped items still succeeds |
+
+`TIDY_UP_UTC_OFFSET` (for example `+03:00`) shifts the dates used by
+`reorganize --by year|month|day`, which are otherwise UTC.
+
+## The system-folder guard
+
+Before any command changes anything, it checks the folder you named. Folders the
+operating system manages are refused; see
+[Platforms](platforms.md#system-folders) for the list per platform and the exact
+policy. In short:
+
+- Refused outright: `C:\Windows`, `Program Files`, `ProgramData`, `C:\Users`,
+  `AppData`, `/usr`, `/etc`, `/System`, `/Library`, `~/Library`, `/home`, `/root`,
+  drive roots, network share roots, and your own home folder.
+- Warned and confirmed: `/usr/local`, `/opt`, `/srv`, the root of a mounted disk.
+- `analyze` and `history` only read, so they warn and carry on.
+- `--yes` answers a confirmation; it is never an override.
+- `--allow-system-folder` gets you to a confirmation that defaults to no. A folder
+  tidy-up cannot write to is refused even with it.
+
 ## Options in the interactive menu
 
 If you started tidy-up by double-clicking it, or just ran `tidy-up` with nothing after
@@ -61,6 +89,56 @@ tidy-up organize [PATH] [OPTIONS]
 | `-n, --dry-run` | off | Show the plan; change nothing |
 | `-y, --yes` | off | Skip confirmation |
 | `-v, --verbose` | off | List every move and skipped item |
+| `--allow-system-folder` | off | Proceed on a folder the system manages. You are still asked to confirm; `--yes` alone is not enough |
+
+## `reorganize`
+
+Unpack a folder that is organized badly and re-file everything. Where `organize`
+sorts loose files and leaves its own output alone, this descends into everything,
+including folders a previous run created, and deletes the folders it empties.
+
+```sh
+tidy-up reorganize [PATH] [OPTIONS]
+```
+
+| Option | Default | Description |
+|---|---|---|
+| `-b, --by <KEY,KEY,...>` | `type` | Grouping keys, outermost first. See below |
+| `-d, --depth <N>` | all | Folder levels to unpack |
+| `--keep-empty-dirs` | off | Leave folders that end up empty instead of deleting them |
+| `--projects <keep\|move>` | `keep` | Leave detected projects in place, or move them to `Projects/` |
+| `-x, --ignore-ext <EXT>` | | Extensions to ignore |
+| `-i, --ignore <PATTERN>` | | Names or globs to ignore |
+| `-f, --ignore-file <FILE>` | | Ignore file; repeatable |
+| `--include-shortcuts` | off | Also process `.lnk`, `.url`, `.webloc`, `.desktop` |
+| `--include-hidden` | off | Also process hidden files and folders |
+| `-n, --dry-run` | off | Show the plan; change nothing |
+| `-y, --yes` | off | Skip confirmation |
+| `-v, --verbose` | off | List every move and skipped item |
+| `--allow-system-folder` | off | Proceed on a folder the system manages. You are still asked to confirm; `--yes` alone is not enough |
+
+### Grouping keys
+
+Each key becomes one level of nesting, in the order given.
+
+| Key | Folder | From |
+|---|---|---|
+| `type` | `Images`, `Documents`, `3D Models` | The same categories `organize` uses |
+| `ext` | `PDF`, `JPG`, `No extension` | The extension, upper-cased |
+| `year` | `2024`, `Unknown date` | Last modified |
+| `month` | `03-March` | Last modified; the number keeps folders in calendar order |
+| `day` | `2024-03-17` | Last modified |
+| `size` | `Small (under 10 MiB)` | Five bands, powers of 1024 |
+| `alpha` | `A`, `0-9`, `Other` | First character of the name |
+
+```sh
+tidy-up reorganize D:\Archive --by year,type   # 2024/Images/photo.jpg
+tidy-up reorganize D:\Archive --by type,ext    # Images/PNG/photo.png
+```
+
+Every key is total, so no file is ever left unplaced. Running the same command
+twice does nothing the second time. `restore` puts the tree back exactly, including
+folders that held nothing.
 
 ## `dedupe`
 
@@ -81,6 +159,7 @@ Accepts the same ignore options as `organize`, plus:
 | `-n, --dry-run` | off | Report duplicates; move nothing |
 | `-y, --yes` | off | Skip confirmation |
 | `-v, --verbose` | off | List every group |
+| `--allow-system-folder` | off | Proceed on a folder the system manages. You are still asked to confirm; `--yes` alone is not enough |
 
 Project folders are never searched.
 
@@ -108,6 +187,7 @@ overlapping, or nothing in common.
 | `-n, --dry-run` | off | Show the plan; change nothing |
 | `-y, --yes` | off | Skip confirmation |
 | `-v, --verbose` | off | List every duplicate group |
+| `--allow-system-folder` | off | Proceed on a folder the system manages. You are still asked to confirm; `--yes` alone is not enough |
 
 Plus the ignore options from `organize` (`-x`, `-i`, `-f`, `--include-shortcuts`, `--include-hidden`).
 
@@ -161,6 +241,7 @@ tidy-up distribute --from <FOLDER>... --to <FOLDER>... [OPTIONS]
 | `--layout <keep\|organize>` | `keep` | Keep the folder structure, or sort into category folders |
 | `--granularity <item\|file>` | `item` | Move whole top-level items (folders stay together) or single files |
 | `-n`, `-y`, `-v` | | Dry run, skip confirmation, list every item |
+| `--allow-system-folder` | off | Proceed on a folder the system manages. You are still asked to confirm; `--yes` alone is not enough |
 
 Plus the ignore options from `organize`. Sources and destinations must be separate folders. Undo with
 `tidy-up restore <first destination>`.
@@ -171,7 +252,7 @@ Permanently delete `_Duplicates/`. Shows the file count and size, defaults to
 "no", and cannot be undone by `restore`.
 
 ```sh
-tidy-up purge [PATH] [-y]
+tidy-up purge [PATH] [-y] [--allow-system-folder]
 ```
 
 ## `restore`
@@ -189,6 +270,7 @@ tidy-up restore [PATH] [OPTIONS]
 | `--on-conflict <rename\|skip>` | `rename` | When the original name is taken again: restore as `name (1).ext`, or leave the file where it is |
 | `-n, --dry-run` | off | Report what would happen |
 | `-y, --yes` | off | Skip confirmation |
+| `--allow-system-folder` | off | Proceed on a folder the system manages. You are still asked to confirm; `--yes` alone is not enough |
 
 A run that finishes with no conflicts or failures is marked restored and won't
 be applied twice. Files deleted since the run are reported as missing and don't
@@ -254,5 +336,9 @@ A folder is a project if it directly contains any of: `.git`, `.hg`, `.svn`,
 
 ## Exit codes
 
-`0` success (including "nothing to do" and cancelled), `1` runtime error,
-`2` invalid arguments.
+`0` success (including "nothing to do", cancelled, and a run that skipped items),
+`1` runtime error or a refusal by the system-folder guard, `2` invalid arguments.
+
+A run that could not process some items still exits `0`, because it did the work it
+could; the items are listed at the end, grouped by cause. Pass `--strict` to exit
+non-zero instead.

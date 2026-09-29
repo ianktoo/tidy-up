@@ -1,7 +1,7 @@
 # Technical paper
 
 *Guarded Bulk File Reorganization: System-Directory Detection, Survivable Execution, and
-Reversible Re-grouping* — Ian Too
+Reversible Re-grouping*, by Ian Too
 ([ORCID 0009-0000-4888-1941](https://orcid.org/0009-0000-4888-1941)).
 
 The paper documents the safety, survivability, re-grouping and observability work in
