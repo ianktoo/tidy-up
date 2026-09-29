@@ -154,6 +154,7 @@ pub fn purge(args: &PurgeArgs) -> Result<Outcome> {
     // Purge deletes, and a delete cannot be undone, so it gets the strictest
     // reading of the guard: never treated as a dry run.
     let root = Guard::write(&args.safety, args.yes, false).root(&args.path)?;
+    Guard::deleting(&root)?;
     let (files, bytes) = duplicates_folder_stats(&root);
     if files == 0 {
         ui::success(&format!("No {DUPLICATES_DIR}/ files to delete."));

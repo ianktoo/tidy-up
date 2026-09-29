@@ -254,3 +254,33 @@ fn no_config_means_no_restrictions() {
         assert!(folder.join("Images").join("a.png").exists());
     }
 }
+
+/// `allow_delete` was parsed, documented and enforced nowhere until a dry run
+/// against real data noticed that `purge` went ahead and reported "nothing to
+/// delete" instead of saying it was not allowed to.
+#[test]
+fn a_policy_that_forbids_deleting_refuses_purge() {
+    let dir = two_folders();
+    let allowed = dir.path().join("allowed");
+    let config = policy(
+        dir.path(),
+        serde_json::json!({"policy": {"allow_delete": false}}),
+    );
+
+    let out = tidy(&["purge", s(&allowed), "--yes", "--config", s(&config)]);
+    assert_eq!(out.status.code(), Some(3), "{}", all_output(&out));
+    let text = all_output(&out);
+    assert!(text.contains("does not allow deleting"), "{text}");
+
+    // Checked before looking at what there is, so an empty _Duplicates does
+    // not hide the policy.
+    assert!(
+        !text.contains("No _Duplicates"),
+        "the policy must be stated rather than skipped over:
+{text}"
+    );
+
+    // Moving is still allowed: only deleting was forbidden.
+    let moving = tidy(&["organize", s(&allowed), "--yes", "--config", s(&config)]);
+    assert!(moving.status.success(), "{}", all_output(&moving));
+}
