@@ -68,6 +68,7 @@ impl Cli {
             Some(Command::Distribute(_)) => "distribute",
             Some(Command::Apply(_)) => "apply",
             Some(Command::Restore(_)) => "restore",
+            Some(Command::Show(_)) => "show",
             Some(Command::History(_)) => "history",
             Some(Command::Purge(_)) => "purge",
         }
@@ -101,6 +102,9 @@ pub enum Command {
     /// Undo a previous run and put files back where they were.
     #[command(visible_alias = "r")]
     Restore(RestoreArgs),
+    /// Show what one previous run actually did, and whether it can still be undone.
+    #[command(visible_alias = "s")]
+    Show(ShowArgs),
     /// List previous runs recorded for a folder.
     #[command(visible_alias = "h")]
     History(HistoryArgs),
@@ -403,6 +407,19 @@ pub struct RestoreArgs {
     /// Do not ask for confirmation.
     #[arg(short, long)]
     pub yes: bool,
+}
+
+/// Arguments for `show`.
+#[derive(Debug, Args, Clone)]
+pub struct ShowArgs {
+    /// Folder the run was recorded in.
+    #[arg(default_value = ".")]
+    pub path: PathBuf,
+    /// Run id, or a unique prefix. Defaults to the most recent run.
+    pub id: Option<String>,
+    /// List every move rather than a sample.
+    #[arg(short, long)]
+    pub verbose: bool,
 }
 
 /// Arguments for `history`.

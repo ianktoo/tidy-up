@@ -178,6 +178,24 @@ impl Cause {
         }
     }
 
+    /// The prose label for a stable key, for reading a log back.
+    ///
+    /// The inverse of [`key`](Self::key). Anything unrecognised comes back as
+    /// it came, so a log from a newer tidy-up still reads sensibly.
+    pub fn label_for_key(key: &str) -> &str {
+        match key {
+            "denied" => "permission denied",
+            "not_found" => "no longer there",
+            "in_use" => "in use by another program",
+            "exists" => "something was already there",
+            "crosses_devices" => "could not cross partitions",
+            "no_space" => "the disk was full",
+            "invalid" => "not a usable name or path",
+            "panic" => "unexpected internal error",
+            other => other,
+        }
+    }
+
     /// What the user can do about it, when there is something.
     pub fn hint(self) -> Option<&'static str> {
         match self {
