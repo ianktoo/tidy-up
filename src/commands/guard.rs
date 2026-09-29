@@ -102,6 +102,19 @@ impl Guard {
         Ok(root)
     }
 
+    /// Refuses a deletion the installation's policy forbids.
+    ///
+    /// Checked before the command looks at what there is to delete, so the
+    /// policy is stated whether or not anything happens to be there. A
+    /// "nothing to delete" message would otherwise hide the fact that
+    /// deleting was never going to be allowed.
+    pub(crate) fn deleting(root: &Path) -> Result<()> {
+        config::policy()
+            .check_delete()
+            .map_err(|e| Refused::at(ErrorCode::SystemFolder, root, e.to_string()))?;
+        Ok(())
+    }
+
     /// Applies the installation's policy, before anything else looks at the
     /// folder. Separate from [`Guard::check`] because policy is about what
     /// this machine permits, not about what the folder is.

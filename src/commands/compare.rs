@@ -203,6 +203,7 @@ fn apply_plan(
 
 /// Permanently deletes extra copies after re-verifying each one.
 fn delete_flow(groups: &[DuplicateGroup], args: &CompareArgs) -> Result<()> {
+    Guard::deleting(&args.paths[0])?;
     let count: usize = groups.iter().map(|g| g.duplicates.len()).sum();
     let bytes: u64 = groups.iter().map(DuplicateGroup::reclaimable_bytes).sum();
     crate::out!();
