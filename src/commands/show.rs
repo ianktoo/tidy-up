@@ -312,9 +312,10 @@ fn suffix(when: &str) -> String {
     }
 }
 
-/// Resolves the folder the same way the other commands do, for tests.
-#[cfg(test)]
-pub(crate) fn review_for(root: &Path, journal: &Journal) -> Review {
+/// Reviews a journal that a caller has already loaded.
+///
+/// Used by the MCP server, which resolves and confines the folder itself.
+pub fn review_of(root: &Path, journal: &Journal) -> Review {
     review(root, journal)
 }
 
@@ -355,7 +356,7 @@ mod tests {
     fn a_clean_run_reports_everything_still_in_place() {
         let dir = tempfile::tempdir().unwrap();
         let journal = run_organize(dir.path());
-        let review = review_for(dir.path(), &journal);
+        let review = review_of(dir.path(), &journal);
 
         assert_eq!(review.moves, 2);
         assert_eq!(review.in_place, 2);
@@ -374,7 +375,7 @@ mod tests {
         let journal = run_organize(dir.path());
         std::fs::remove_file(dir.path().join("Images").join("a.png")).unwrap();
 
-        let review = review_for(dir.path(), &journal);
+        let review = review_of(dir.path(), &journal);
         assert_eq!(review.in_place, 1);
         assert_eq!(review.gone(), 1);
         let missing = review
@@ -389,7 +390,7 @@ mod tests {
     fn paths_are_relative_so_the_report_reads_as_the_folder_does() {
         let dir = tempfile::tempdir().unwrap();
         let journal = run_organize(dir.path());
-        let review = review_for(dir.path(), &journal);
+        let review = review_of(dir.path(), &journal);
         for item in &review.items {
             assert!(
                 !item.to.contains(dir.path().to_str().unwrap()),
@@ -406,7 +407,7 @@ mod tests {
         journal.mark_restored().unwrap();
         let journal = Journal::find(dir.path(), &journal.header.id).unwrap();
 
-        let review = review_for(dir.path(), &journal);
+        let review = review_of(dir.path(), &journal);
         assert!(review.restored);
         assert!(review.restored_at.is_some());
     }
@@ -417,7 +418,7 @@ mod tests {
     fn a_run_with_no_log_still_reviews() {
         let dir = tempfile::tempdir().unwrap();
         let journal = run_organize(dir.path());
-        let review = review_for(dir.path(), &journal);
+        let review = review_of(dir.path(), &journal);
         assert!(review.skipped.is_empty());
         assert!(review.problems.is_empty());
     }
@@ -444,7 +445,7 @@ mod tests {
         )
         .unwrap();
 
-        let review = review_for(dir.path(), &journal);
+        let review = review_of(dir.path(), &journal);
         assert_eq!(review.skipped.get("hidden"), Some(&3));
         assert_eq!(review.skipped.get("ignored"), Some(&1));
         assert_eq!(review.problems.get("denied"), Some(&2));

@@ -18,6 +18,7 @@
 //! | undo | [`restore`] | reverse a journal |
 //! | present | [`cli`], [`commands`], [`ui`] | arguments, flows, terminal output |
 //! | report | [`api`] | the same values as JSON, plus exit codes and plan files |
+//! | serve | [`mcp`] | a Model Context Protocol server, for agents |
 //!
 //! ```no_run
 //! use tidy_up::{
@@ -47,6 +48,7 @@ pub mod error;
 pub mod executor;
 pub mod fsops;
 pub mod journal;
+pub mod mcp;
 pub mod obs;
 pub mod outcome;
 pub mod parallel;

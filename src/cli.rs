@@ -68,6 +68,7 @@ impl Cli {
             Some(Command::Distribute(_)) => "distribute",
             Some(Command::Apply(_)) => "apply",
             Some(Command::Restore(_)) => "restore",
+            Some(Command::Mcp(_)) => "mcp",
             Some(Command::Show(_)) => "show",
             Some(Command::History(_)) => "history",
             Some(Command::Purge(_)) => "purge",
@@ -102,6 +103,8 @@ pub enum Command {
     /// Undo a previous run and put files back where they were.
     #[command(visible_alias = "r")]
     Restore(RestoreArgs),
+    /// Serve the Model Context Protocol on stdin/stdout, so an agent can drive tidy-up.
+    Mcp(McpArgs),
     /// Show what one previous run actually did, and whether it can still be undone.
     #[command(visible_alias = "s")]
     Show(ShowArgs),
@@ -407,6 +410,20 @@ pub struct RestoreArgs {
     /// Do not ask for confirmation.
     #[arg(short, long)]
     pub yes: bool,
+}
+
+/// Arguments for `mcp`.
+#[derive(Debug, Args, Clone)]
+pub struct McpArgs {
+    /// Folder the server is confined to. Nothing outside it can be reached.
+    #[arg(long, default_value = ".")]
+    pub root: PathBuf,
+    /// Also offer the tools that change things.
+    ///
+    /// Without this the server can plan and report but not act, which is the
+    /// right default for something driven by an agent.
+    #[arg(long)]
+    pub allow_writes: bool,
 }
 
 /// Arguments for `show`.
