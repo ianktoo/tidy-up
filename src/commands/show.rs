@@ -15,7 +15,10 @@
 //! * what the run **left alone**, which the journal never records because it
 //!   only logs changes. That comes from the run log when `--log` was used.
 
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::Result;
 use serde::Serialize;
@@ -193,11 +196,8 @@ fn review(root: &Path, journal: &Journal) -> Review {
 /// unreadable log is not an error: most runs are not logged, and the review is
 /// still worth having without it.
 fn from_run_log(root: &Path, id: &str) -> (BTreeMap<String, u64>, BTreeMap<String, u64>) {
-    let path = journal_dir(root)
-        .parent()
-        .map(|state| state.join("logs").join(format!("{id}.jsonl")));
     let (mut skipped, mut problems) = (BTreeMap::new(), BTreeMap::new());
-    let Some(text) = path.and_then(|p| std::fs::read_to_string(p).ok()) else {
+    let Some(text) = run_log_for(root, id) else {
         return (skipped, problems);
     };
     for line in text.lines() {
@@ -221,6 +221,47 @@ fn from_run_log(root: &Path, id: &str) -> (BTreeMap<String, u64>, BTreeMap<Strin
         }
     }
     (skipped, problems)
+}
+
+/// Finds the run log belonging to journal `id`, if there is one.
+///
+/// The obvious guess is `logs/<id>.jsonl`, and usually it is right. It is not
+/// guaranteed: the run log and the journal mint their ids from separate calls
+/// to the clock, so a run that crosses a second boundary between starting and
+/// opening its journal ends up with two different ids. That is why each log
+/// records the journal it belongs to, and why a miss falls back to looking.
+fn run_log_for(root: &Path, id: &str) -> Option<String> {
+    let logs = journal_dir(root).parent()?.join("logs");
+    if let Ok(text) = std::fs::read_to_string(logs.join(format!("{id}.jsonl"))) {
+        return Some(text);
+    }
+    // Capped at twenty per folder, so reading them is cheap.
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(&logs)
+        .ok()?
+        .filter_map(std::result::Result::ok)
+        .map(|entry| entry.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "jsonl"))
+        .collect();
+    candidates.sort();
+    for path in candidates.into_iter().rev() {
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if names_journal(&text, id) {
+            return Some(text);
+        }
+    }
+    None
+}
+
+/// Whether this log says it produced journal `id`.
+fn names_journal(text: &str, id: &str) -> bool {
+    text.lines().any(|line| {
+        serde_json::from_str::<serde_json::Value>(line).is_ok_and(|event| {
+            event.get("type").and_then(|t| t.as_str()) == Some("execute")
+                && event.get("journal_id").and_then(|j| j.as_str()) == Some(id)
+        })
+    })
 }
 
 /// How many moves to list before summarising, unless `--verbose`.
@@ -425,6 +466,68 @@ mod tests {
 
     /// What a run left alone is never in the journal, because a journal only
     /// records changes. It comes from the run log when there is one.
+    /// The log and the journal mint their ids from separate calls to the
+    /// clock, so a run that crosses a second boundary between starting and
+    /// opening its journal ends up with two. CI found this before a user did:
+    /// the review simply said nothing about what was left alone, on whichever
+    /// platform happened to be unlucky that minute.
+    #[test]
+    fn a_log_whose_id_differs_from_the_journal_is_still_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = run_organize(dir.path());
+        let logs = dir.path().join(".tidy-up").join("logs");
+        std::fs::create_dir_all(&logs).unwrap();
+
+        // Deliberately named for a different second, as a slow run produces.
+        let other_id = "19990101-000000";
+        assert_ne!(other_id, journal.header.id);
+        std::fs::write(
+            logs.join(format!("{other_id}.jsonl")),
+            format!(
+                "{}
+{}
+",
+                r#"{"type":"scan","skipped":{"hidden":2}}"#,
+                serde_json::json!({"type": "execute", "journal_id": journal.header.id})
+            ),
+        )
+        .unwrap();
+
+        let review = review_of(dir.path(), &journal);
+        assert_eq!(
+            review.skipped.get("hidden"),
+            Some(&2),
+            "the log names the journal it produced, so it can still be matched"
+        );
+    }
+
+    /// A log belonging to some other run must not be picked up.
+    #[test]
+    fn a_log_for_a_different_run_is_not_used() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = run_organize(dir.path());
+        let logs = dir.path().join(".tidy-up").join("logs");
+        std::fs::create_dir_all(&logs).unwrap();
+        std::fs::write(
+            logs.join("19990101-000000.jsonl"),
+            format!(
+                "{}
+{}
+",
+                r#"{"type":"scan","skipped":{"hidden":99}}"#,
+                r#"{"type":"execute","journal_id":"20200101-000000"}"#
+            ),
+        )
+        .unwrap();
+
+        let review = review_of(dir.path(), &journal);
+        assert!(
+            review.skipped.is_empty(),
+            "someone else's log must not be borrowed: {:?}",
+            review.skipped
+        );
+    }
+
     #[test]
     fn what_the_run_left_alone_comes_from_the_run_log() {
         let dir = tempfile::tempdir().unwrap();
