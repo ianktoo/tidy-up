@@ -351,6 +351,52 @@ A run that finishes with no conflicts or failures is marked restored and won't
 be applied twice. Files deleted since the run are reported as missing and don't
 block completion.
 
+## `show`
+
+What one run actually did, and whether it can still be undone. `history` lists
+runs; this explains one.
+
+```sh
+tidy-up show [PATH] [ID] [-v]
+```
+
+With no id, the most recent run. An id may be a unique prefix.
+
+| Option | Default | Description |
+|---|---|---|
+| `-v, --verbose` | off | List every move rather than a sample |
+
+```console
+$ tidy-up show D:\Downloads
+
+Run 20260929-014441
+- organize - 2026-09-29 01:44:41 UTC - 5 moves
+
+What it moved
+  ? a.png -> Images.png
+    b.pdf -> Documents.pdf
+    ...
+- 5 folders created
+
+What it left alone
+  hidden items: 1
+
+Can it still be undone?
+! Partly. 1 of 5 have since been moved, renamed or deleted, and will be
+  reported as missing.
+  tidy-up restore "D:\Downloads" --id 20260929-014441
+```
+
+A `?` marks an item that is no longer where the run put it. The journal cannot
+know that, because the folder carries on changing after a run, so `show`
+checks the disk as it reports.
+
+**What the run left alone** is only available when the run used `--log`: a
+journal records changes, so it can never say what did not change. Without a
+log the rest of the review still works.
+
+Read-only. Reviewing never modifies the folder.
+
 ## `history`
 
 List recorded runs for a folder, newest first, with operation, time (UTC), move

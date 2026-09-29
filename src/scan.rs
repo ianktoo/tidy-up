@@ -95,6 +95,29 @@ impl SkipReason {
         }
     }
 
+    /// The prose label for a stable key, for reading a log or a journal back.
+    ///
+    /// The inverse of [`key`](Self::key). Anything unrecognised is returned as
+    /// it came, so a log written by a newer tidy-up still reads sensibly.
+    pub fn label_for_key(key: &str) -> &str {
+        match key {
+            "ignored" => "matched your ignore rules",
+            "system_file" => "system files",
+            "shortcut" => "shortcuts",
+            "hidden" => "hidden items",
+            "project" => "code projects",
+            "folder" => "folders beyond scan depth",
+            "symlink" => "symbolic links",
+            "tool_folder" => "tidy-up state folders",
+            "already_organized" => "already-organized folders",
+            "unsupported_name" => "non-UTF-8 names",
+            "unreadable" => "unreadable items",
+            "denied" => "items you do not have permission to read",
+            "system_attribute" => "items the operating system marks as its own",
+            other => other,
+        }
+    }
+
     /// Classifies a failed read: a refusal is worth saying out loud, anything
     /// else is merely unreadable.
     pub fn from_io(error: &std::io::Error) -> SkipReason {
