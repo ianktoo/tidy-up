@@ -6,6 +6,7 @@ use anyhow::{Result, bail};
 use console::style;
 
 use crate::{
+    api::Outcome,
     cli::{HistoryArgs, RestoreArgs},
     commands::guard::Guard,
     journal::Journal,
@@ -26,7 +27,7 @@ pub fn active_journals(root: &Path) -> Result<Vec<Journal>> {
 }
 
 /// Restores the most recent run (or `--id`, or `--all`).
-pub fn run(args: &RestoreArgs) -> Result<()> {
+pub fn run(args: &RestoreArgs) -> Result<Outcome> {
     let root = Guard::write(&args.safety, args.yes, args.dry_run).root(&args.path)?;
     let mut active = active_journals(&root)?;
 
@@ -40,7 +41,7 @@ pub fn run(args: &RestoreArgs) -> Result<()> {
     };
     if selected.is_empty() {
         ui::success("Nothing to restore: no active runs recorded for this folder.");
-        return Ok(());
+        return Ok(Outcome::default());
     }
     for mut journal in selected {
         restore_one(
@@ -57,7 +58,7 @@ pub fn run(args: &RestoreArgs) -> Result<()> {
             active.len()
         ));
     }
-    Ok(())
+    Ok(Outcome::default())
 }
 
 /// Confirms and undoes a single journal, printing a full account of the result.
@@ -145,13 +146,13 @@ fn print_report(root: &Path, report: &RestoreReport, dry_run: bool) {
 }
 
 /// Lists every recorded run for a folder.
-pub fn history(args: &HistoryArgs) -> Result<()> {
+pub fn history(args: &HistoryArgs) -> Result<Outcome> {
     // `history` only reads, so it warns and carries on.
     let root = Guard::read().root(&args.path)?;
     let journals = Journal::load_all(&root)?;
     if journals.is_empty() {
         ui::info("No runs recorded for this folder yet.");
-        return Ok(());
+        return Ok(Outcome::default());
     }
     ui::heading(&format!("History for {}", root.display()));
     for j in journals.iter().rev() {
@@ -160,7 +161,7 @@ pub fn history(args: &HistoryArgs) -> Result<()> {
         } else {
             style("active").green()
         };
-        println!(
+        crate::out!(
             "  {}  {:<9} {:<26} {:>10}  {}",
             style(&j.header.id).bold(),
             j.header.operation.to_string(),
@@ -169,5 +170,5 @@ pub fn history(args: &HistoryArgs) -> Result<()> {
             status
         );
     }
-    Ok(())
+    Ok(Outcome::default())
 }

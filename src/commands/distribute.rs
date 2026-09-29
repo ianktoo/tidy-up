@@ -6,6 +6,7 @@ use anyhow::Result;
 use console::style;
 
 use crate::{
+    api::Outcome,
     cli::DistributeArgs,
     commands::guard::Guard,
     commands::print_execution,
@@ -22,7 +23,7 @@ use crate::{
 };
 
 /// Scans the sources, decides the split, previews it, and moves the files.
-pub fn run(args: &DistributeArgs) -> Result<()> {
+pub fn run(args: &DistributeArgs) -> Result<Outcome> {
     let (sources, dests) = validate_locations(&args.from, &args.to)?;
     // Destinations matter as much as sources: `--to C:\Windows` is every bit as
     // bad as `--from`. A destination that does not exist yet is judged by the
@@ -71,7 +72,7 @@ pub fn run(args: &DistributeArgs) -> Result<()> {
     if collected.units.is_empty() {
         ui::print_skipped(Path::new(""), &collected.skipped, args.verbose);
         ui::success("Nothing to move.");
-        return Ok(());
+        return Ok(Outcome::default());
     }
 
     let allocation = allocate(
@@ -88,11 +89,11 @@ pub fn run(args: &DistributeArgs) -> Result<()> {
     }
     ui::print_skipped(Path::new(""), &collected.skipped, args.verbose);
     if allocation.unit_count() == 0 {
-        println!();
+        crate::out!();
         ui::warn(
             "Nothing can be moved with these limits. Try a higher --max-fill or a different --to.",
         );
-        return Ok(());
+        return Ok(Outcome::default());
     }
 
     let journal_root = &destinations[0].path;
@@ -100,11 +101,11 @@ pub fn run(args: &DistributeArgs) -> Result<()> {
     print_sources(&source_impact(&sources, &plan, &destinations, &SystemDisks));
 
     if args.dry_run {
-        println!();
+        crate::out!();
         ui::warn("Dry run: nothing was changed.");
-        return Ok(());
+        return Ok(Outcome::default());
     }
-    println!();
+    crate::out!();
     let prompt = format!(
         "Move {} ({}) to {}?",
         ui::plural(plan.moves.len(), "file"),
@@ -113,7 +114,7 @@ pub fn run(args: &DistributeArgs) -> Result<()> {
     );
     if !ui::confirm(&prompt, true, args.yes)? {
         ui::info("Cancelled. Nothing was changed.");
-        return Ok(());
+        return Ok(Outcome::default());
     }
 
     let bar = ui::TransferBar::new("Distributing");
@@ -121,19 +122,19 @@ pub fn run(args: &DistributeArgs) -> Result<()> {
     bar.finish();
     print_execution(journal_root, &executed?);
     ui::hint("Emptied source folders are left in place; delete them if you no longer need them.");
-    Ok(())
+    Ok(Outcome::default())
 }
 
 fn print_destinations(dests: &[Destination], allocation: &Allocation, limits: &Limits) {
     ui::heading("Destinations");
     let after = projected_fill(dests, allocation);
     for (i, dest) in dests.iter().enumerate() {
-        println!(
+        crate::out!(
             "  {}  {}",
             style(format!("#{}", i + 1)).cyan().bold(),
             dest.path.display()
         );
-        println!(
+        crate::out!(
             "      {} -> {} full  {}  ({}), room for {}",
             ui::percent(dest.space.used_fraction()),
             style(ui::percent(after[i])).bold(),
@@ -151,7 +152,7 @@ fn print_destinations(dests: &[Destination], allocation: &Allocation, limits: &L
     } else {
         ui::hint(&cap);
     }
-    println!(
+    crate::out!(
         "  {}",
         style(format!(
             "{} · {} in total",
@@ -183,7 +184,7 @@ fn print_left_out(units: &[Unit], allocation: &Allocation) {
 fn print_items(units: &[Unit], dests: &[Destination], allocation: &Allocation) {
     ui::heading("Items");
     for (i, dest) in dests.iter().enumerate() {
-        println!(
+        crate::out!(
             "  {}  {}",
             style(format!("#{}", i + 1)).cyan().bold(),
             dest.path.display()
@@ -206,7 +207,7 @@ fn print_sources(impacts: &[SourceImpact]) {
         } else {
             format!("frees {}", style(ui::format_size(s.freed)).green())
         };
-        println!(
+        crate::out!(
             "  {}\n      {} -> {} full  ({note})",
             s.path.display(),
             ui::percent(s.before),

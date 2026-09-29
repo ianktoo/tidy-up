@@ -4,6 +4,7 @@ use anyhow::Result;
 use console::style;
 
 use crate::{
+    api::{Outcome, PlanFile},
     cli::{DedupeArgs, PurgeArgs},
     commands::guard::Guard,
     commands::print_execution,
@@ -22,7 +23,7 @@ use crate::{
 const GROUP_PREVIEW: usize = 10;
 
 /// Finds duplicates, quarantines the extra copies and recommends deletion.
-pub fn run(args: &DedupeArgs) -> Result<()> {
+pub fn run(args: &DedupeArgs) -> Result<Outcome> {
     let root = Guard::write(&args.safety, args.yes, args.dry_run)
         .with_filter(&args.filter)
         .root(&args.path)?;
@@ -52,26 +53,39 @@ pub fn run(args: &DedupeArgs) -> Result<()> {
             ui::plural(report.unreadable.len(), "file")
         ));
     }
+    // The same values the prose output above is built from.
+    let mut outcome = Outcome::at(&root, args.dry_run).with_scan(&scanned, args.verbose);
+    outcome.detail = Some(serde_json::json!({
+        "groups": report.groups.len(),
+        "extra_copies": report.groups.iter().map(|g| g.duplicates.len()).sum::<usize>(),
+        "wasted_bytes": report
+            .groups
+            .iter()
+            .map(|g| g.size * g.duplicates.len() as u64)
+            .sum::<u64>(),
+        "unreadable": report.unreadable.len(),
+    }));
     if report.groups.is_empty() {
         ui::success("No duplicates found.");
-        return Ok(());
+        return Ok(outcome);
     }
     print_groups(&root, &report, args.verbose);
 
     let plan = build_dedupe_plan(&root, &report.groups);
+    outcome.plan = Some(PlanFile::of(&plan, Operation::Dedupe));
     if args.dry_run {
-        println!();
+        crate::out!();
         ui::warn("Dry run: nothing was changed.");
-        return Ok(());
+        return Ok(outcome);
     }
-    println!();
+    crate::out!();
     let prompt = format!(
         "Move {} into {DUPLICATES_DIR}/ for review? (originals stay in place)",
         ui::plural(plan.moves.len(), "duplicate")
     );
     if !ui::confirm(&prompt, true, args.yes)? {
         ui::info("Cancelled. Nothing was changed.");
-        return Ok(());
+        return Ok(outcome);
     }
 
     let bar = ui::TransferBar::new("Isolating");
@@ -91,7 +105,7 @@ pub fn run(args: &DedupeArgs) -> Result<()> {
         "Delete for good: tidy-up purge \"{}\"",
         root.display()
     ));
-    Ok(())
+    Ok(Outcome::default())
 }
 
 fn print_groups(root: &std::path::Path, report: &DuplicateReport, verbose: bool) {
@@ -102,19 +116,19 @@ fn print_groups(root: &std::path::Path, report: &DuplicateReport, verbose: bool)
         GROUP_PREVIEW.min(report.groups.len())
     };
     for (index, group) in report.groups.iter().take(shown).enumerate() {
-        println!(
+        crate::out!(
             "  {} {} × {}",
             style(format!("Group-{:03}", index + 1)).bold(),
             ui::plural(group.duplicates.len() + 1, "copy"),
             style(ui::format_size(group.size)).dim()
         );
-        println!(
+        crate::out!(
             "    {} {}",
             style("keep").green(),
             ui::rel(root, &group.keeper)
         );
         for dup in &group.duplicates {
-            println!("    {} {}", style("move").yellow(), ui::rel(root, dup));
+            crate::out!("    {} {}", style("move").yellow(), ui::rel(root, dup));
         }
     }
     if shown < report.groups.len() {
@@ -123,7 +137,7 @@ fn print_groups(root: &std::path::Path, report: &DuplicateReport, verbose: bool)
             report.groups.len() - shown
         ));
     }
-    println!(
+    crate::out!(
         "\n  {}",
         style(format!(
             "{} in {} · {} reclaimable",
@@ -136,14 +150,14 @@ fn print_groups(root: &std::path::Path, report: &DuplicateReport, verbose: bool)
 }
 
 /// Permanently deletes the duplicates folder after confirmation.
-pub fn purge(args: &PurgeArgs) -> Result<()> {
+pub fn purge(args: &PurgeArgs) -> Result<Outcome> {
     // Purge deletes, and a delete cannot be undone, so it gets the strictest
     // reading of the guard: never treated as a dry run.
     let root = Guard::write(&args.safety, args.yes, false).root(&args.path)?;
     let (files, bytes) = duplicates_folder_stats(&root);
     if files == 0 {
         ui::success(&format!("No {DUPLICATES_DIR}/ files to delete."));
-        return Ok(());
+        return Ok(Outcome::default());
     }
     ui::warn(&format!(
         "This permanently deletes {} ({}). `tidy-up restore` cannot bring them back.",
@@ -152,7 +166,7 @@ pub fn purge(args: &PurgeArgs) -> Result<()> {
     ));
     if !ui::confirm("Delete them?", false, args.yes)? {
         ui::info("Cancelled. Nothing was deleted.");
-        return Ok(());
+        return Ok(Outcome::default());
     }
     let (files, bytes) = purge_duplicates(&root)?;
     ui::success(&format!(
@@ -160,5 +174,5 @@ pub fn purge(args: &PurgeArgs) -> Result<()> {
         ui::plural(files, "file"),
         ui::format_size(bytes)
     ));
-    Ok(())
+    Ok(Outcome::default())
 }

@@ -162,7 +162,27 @@ Dates are UTC, because the standard library has no time zone API and guessing ba
 on one platform is worse than being explicit. Set `TIDY_UP_UTC_OFFSET=+03:00` to
 group by your own clock.
 
-### 9. One bad file never ends the run
+### 9. It is built to be driven by something other than a person
+
+Every command takes `--json` and prints exactly one object, whatever happened.
+Errors carry a stable code, and the exit code says whether tidy-up refused
+(`3`) or broke (`1`), which a caller needs in order to know whether retrying
+makes any sense.
+
+Because a plan is plain data, the two halves come apart: one process proposes,
+a person or another process reviews, a third carries it out.
+
+```console
+$ tidy-up organize D:\Downloads --dry-run --json > plan.json
+$ tidy-up apply plan.json --yes
+```
+
+A plan file is a trust boundary, not just a convenience. It is JSON on disk, so
+before anything moves tidy-up checks that every path in it sits inside the
+plan's own root and that the root still passes the guard. A plan that reaches
+outside itself is refused rather than carried out.
+
+### 10. One bad file never ends the run
 
 A locked file, a folder you lack permission to read, a name the filesystem rejects:
 each is skipped, classified and reported at the end, grouped by cause with something
@@ -180,7 +200,7 @@ A run that skipped things still exits `0`, because it did the work it could. Pas
 failure, which is fatal on purpose and rolls back the move in flight: a change that
 cannot be recorded is a change you cannot undo.
 
-### 10. It stays out of your way
+### 11. It stays out of your way
 
 - **Shortcuts and hidden files skipped by default** (`.lnk`, `.url`, dotfiles, `desktop.ini`); opt in with a flag.
 - **Ignore anything** by extension, glob or exact name, from flags or a text file you commit alongside your dotfiles.
@@ -202,6 +222,9 @@ tidy-up organize ~/Downloads                     # do it
 tidy-up reorganize ~/Archive --by year,type -n   # re-file an old mess, preview only
 tidy-up restore  ~/Downloads                     # change your mind
 ```
+
+Driving it from a script or an agent? Add `--json` to any command.
+[Machine output](docs/usage.md#machine-output).
 
 Every release archive includes scripts that install `tidy-up`, put it on your PATH, and undo that again (`scripts/add-to-path.sh`, `scripts/add-to-path.ps1` and their `remove-from-path` counterparts).
 

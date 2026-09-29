@@ -1,6 +1,7 @@
 //! Command implementations: glue between the CLI, the engine and the terminal UI.
 
 pub mod analyze;
+pub mod apply;
 pub mod compare;
 pub mod dedupe;
 pub mod distribute;
@@ -13,9 +14,10 @@ pub mod session;
 
 use std::path::Path;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
 use crate::{
+    api::Outcome,
     cli::{Cli, Command},
     executor::ExecutionReport,
     obs,
@@ -70,24 +72,11 @@ pub(crate) fn print_problems(root: &Path, problems: &Problems, verbose: bool) {
 }
 
 /// Runs whichever command the user asked for (interactive menu if none).
-pub fn dispatch(cli: Cli) -> Result<()> {
-    let strict = cli.strict;
-    let outcome = dispatch_command(cli);
-    // A run that skipped items still did the work it could, so it succeeds
-    // unless the caller asked to be told otherwise.
-    if outcome.is_ok() && strict {
-        let metrics = obs::snapshot();
-        if metrics.failed > 0 {
-            bail!(
-                "{} item(s) were skipped and --strict was given",
-                metrics.failed
-            );
-        }
-    }
-    outcome
-}
-
-fn dispatch_command(cli: Cli) -> Result<()> {
+/// Runs whichever command the user asked for, and hands back what it did.
+///
+/// `--strict` is applied by the caller, from the returned outcome, so that the
+/// JSON rendering still describes a run that is about to exit non-zero.
+pub fn dispatch(cli: Cli) -> Result<Outcome> {
     match cli.command {
         None => interactive::run(),
         Some(Command::Organize(args)) => organize::run(&args),
@@ -96,6 +85,7 @@ fn dispatch_command(cli: Cli) -> Result<()> {
         Some(Command::Compare(args)) => compare::run(&args),
         Some(Command::Analyze(args)) => analyze::run(&args),
         Some(Command::Distribute(args)) => distribute::run(&args),
+        Some(Command::Apply(args)) => apply::run(&args),
         Some(Command::Restore(args)) => restore::run(&args),
         Some(Command::History(args)) => restore::history(&args),
         Some(Command::Purge(args)) => dedupe::purge(&args),

@@ -7,6 +7,7 @@ use console::style;
 use dialoguer::Select;
 
 use crate::{
+    api::Outcome,
     cli::CompareArgs,
     commands::guard::Guard,
     commands::print_execution,
@@ -25,8 +26,13 @@ use crate::{
 const GROUP_PREVIEW: usize = 8;
 
 /// Compares the folders, reports how they relate, and applies the chosen action.
-pub fn run(args: &CompareArgs) -> Result<()> {
+pub fn run(args: &CompareArgs) -> Result<Outcome> {
     let folders = validate_folders(&args.paths)?;
+    let outcome = || Outcome {
+        roots: folders.iter().map(|f| f.display().to_string()).collect(),
+        dry_run: args.dry_run,
+        ..Default::default()
+    };
     // Every folder in a compare is a candidate for moves, merges or deletes, so
     // each one is judged, not just the primary.
     let guard = Guard::write(&args.safety, args.yes, args.dry_run).with_filter(&args.filter);
@@ -64,7 +70,7 @@ pub fn run(args: &CompareArgs) -> Result<()> {
     let has_duplicates = !found.groups.is_empty();
     if has_duplicates {
         print_groups(&folders, &found.groups, args.verbose);
-        println!(
+        crate::out!(
             "\n  {}",
             style(format!(
                 "{} in {} · {} reclaimable",
@@ -75,28 +81,28 @@ pub fn run(args: &CompareArgs) -> Result<()> {
             .bold()
         );
     } else {
-        println!();
+        crate::out!();
         ui::success("No file content is repeated across these folders.");
     }
 
     let action = match choose_action(args, &folders[0], has_duplicates, folders.len())? {
         CompareAction::Leave => {
             ui::hint("Left everything as is.");
-            return Ok(());
+            return Ok(outcome());
         }
         action => action,
     };
     match action {
         CompareAction::Move => {
             let plan = build_dedupe_plan(&folders[0], &found.groups);
-            apply_plan(&folders[0], plan, &found.groups, args)
+            apply_plan(&folders[0], plan, &found.groups, args).map(|()| outcome())
         }
         CompareAction::Merge => {
             let plan = build_merge_plan(&folders, &files, &found.groups);
-            apply_plan(&folders[0], plan, &found.groups, args)
+            apply_plan(&folders[0], plan, &found.groups, args).map(|()| outcome())
         }
-        CompareAction::Delete => delete_flow(&found.groups, args),
-        CompareAction::Leave => Ok(()),
+        CompareAction::Delete => delete_flow(&found.groups, args).map(|()| outcome()),
+        CompareAction::Leave => Ok(outcome()),
     }
 }
 
@@ -141,7 +147,7 @@ fn choose_action(
             "Delete extra copies permanently".into(),
         ));
     }
-    println!();
+    crate::out!();
     let labels: Vec<&str> = options.iter().map(|(_, label)| label.as_str()).collect();
     let pick = Select::new()
         .with_prompt("What should happen with the duplicates?")
@@ -164,11 +170,11 @@ fn apply_plan(
     }
     ui::print_plan(&plan, args.verbose);
     if args.dry_run {
-        println!();
+        crate::out!();
         ui::warn("Dry run: nothing was changed.");
         return Ok(());
     }
-    println!();
+    crate::out!();
     let prompt = format!(
         "Apply these {}? (you can undo this)",
         ui::plural(plan.moves.len(), "move")
@@ -199,7 +205,7 @@ fn apply_plan(
 fn delete_flow(groups: &[DuplicateGroup], args: &CompareArgs) -> Result<()> {
     let count: usize = groups.iter().map(|g| g.duplicates.len()).sum();
     let bytes: u64 = groups.iter().map(DuplicateGroup::reclaimable_bytes).sum();
-    println!();
+    crate::out!();
     ui::warn(&format!(
         "This permanently deletes {} ({}). One copy of each file is kept. It cannot be undone.",
         ui::plural(count, "file"),
@@ -246,7 +252,7 @@ fn tag(index: usize) -> String {
 fn print_comparison(comparison: &Comparison) {
     ui::heading("Folders");
     for (i, f) in comparison.folders.iter().enumerate() {
-        println!(
+        crate::out!(
             "  {}  {}\n      {} · {} | {} shared · {} unique · {} repeated inside",
             style(tag(i)).cyan().bold(),
             f.path.display(),
@@ -302,19 +308,19 @@ fn print_groups(folders: &[PathBuf], groups: &[DuplicateGroup], verbose: bool) {
         GROUP_PREVIEW.min(groups.len())
     };
     for (index, group) in groups.iter().take(shown).enumerate() {
-        println!(
+        crate::out!(
             "  {} {} x {}",
             style(format!("Group-{:03}", index + 1)).bold(),
             ui::plural(group.duplicates.len() + 1, "copy"),
             style(ui::format_size(group.size)).dim()
         );
-        println!(
+        crate::out!(
             "    {} {}",
             style("keep ").green(),
             label(folders, &group.keeper)
         );
         for dup in &group.duplicates {
-            println!("    {} {}", style("extra").yellow(), label(folders, dup));
+            crate::out!("    {} {}", style("extra").yellow(), label(folders, dup));
         }
     }
     if shown < groups.len() {

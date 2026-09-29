@@ -30,7 +30,7 @@ pub struct Progress<'a> {
 }
 
 /// Outcome of [`execute`].
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone, serde::Serialize)]
 pub struct ExecutionReport {
     /// Id of the journal describing this run (empty if nothing was planned).
     pub journal_id: String,

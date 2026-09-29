@@ -12,6 +12,43 @@ use crate::{dedupe::HashProgress, executor::Progress, plan::Plan, scan::Skipped}
 /// How many example lines to show per section unless `--verbose` is given.
 const PREVIEW_LIMIT: usize = 8;
 
+/// Prints a line of prose, unless `--json` asked for silence.
+///
+/// Every prose print in the crate goes through this. `println!` writes to the
+/// same stream as the JSON envelope, so one stray call makes the output
+/// unparseable; a single choke point is what stops that happening by accident.
+#[macro_export]
+macro_rules! out {
+    () => {
+        if !$crate::ui::is_quiet() {
+            println!();
+        }
+    };
+    ($($arg:tt)*) => {
+        if !$crate::ui::is_quiet() {
+            println!($($arg)*);
+        }
+    };
+}
+
+/// Set while `--json` is in effect.
+///
+/// The machine rendering is one object on stdout, so the prose rendering has to
+/// get out of the way entirely: a heading or a progress bar interleaved with it
+/// would make the output unparseable. A process-level flag because a run has
+/// exactly one output mode, decided before any command starts.
+static QUIET: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Silences the prose output. Called once, when `--json` is given.
+pub fn set_quiet(quiet: bool) {
+    QUIET.store(quiet, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether prose output is silenced.
+pub fn is_quiet() -> bool {
+    QUIET.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Formats a byte count as `1.5 MiB`.
 pub fn format_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
@@ -72,12 +109,12 @@ pub fn is_interactive() -> bool {
 
 /// Prints the program banner.
 pub fn banner() {
-    println!(
+    crate::out!(
         "{} {}",
         style("tidy-up").cyan().bold(),
         style(format!("v{}", env!("CARGO_PKG_VERSION"))).dim()
     );
-    println!(
+    crate::out!(
         "{}\n",
         style("Organize folders by file type, and undo it any time.").dim()
     );
@@ -85,22 +122,34 @@ pub fn banner() {
 
 /// Section heading.
 pub fn heading(text: &str) {
-    println!("\n{}", style(text).bold().underlined());
+    if is_quiet() {
+        return;
+    }
+    crate::out!("\n{}", style(text).bold().underlined());
 }
 
 /// Success line.
 pub fn success(text: &str) {
-    println!("{} {text}", style("✔").green().bold());
+    if is_quiet() {
+        return;
+    }
+    crate::out!("{} {text}", style("✔").green().bold());
 }
 
 /// Neutral information line.
 pub fn info(text: &str) {
-    println!("{} {text}", style("•").cyan());
+    if is_quiet() {
+        return;
+    }
+    crate::out!("{} {text}", style("•").cyan());
 }
 
 /// Warning line.
 pub fn warn(text: &str) {
-    println!("{} {text}", style("!").yellow().bold());
+    if is_quiet() {
+        return;
+    }
+    crate::out!("{} {text}", style("!").yellow().bold());
 }
 
 /// Warning line for something that is about to be refused.
@@ -108,16 +157,25 @@ pub fn warn(text: &str) {
 /// Louder than [`warn`] on purpose: it is the last thing a person reads before
 /// tidy-up declines to touch a system folder.
 pub fn danger(text: &str) {
-    println!("{} {}", style("!").red().bold(), style(text).red().bold());
+    if is_quiet() {
+        return;
+    }
+    crate::out!("{} {}", style("!").red().bold(), style(text).red().bold());
 }
 
 /// Dimmed hint line.
 pub fn hint(text: &str) {
-    println!("  {}", style(text).dim());
+    if is_quiet() {
+        return;
+    }
+    crate::out!("  {}", style(text).dim());
 }
 
 /// Spinner for work of unknown length; call `finish_and_clear` when done.
 pub fn spinner(message: &str) -> ProgressBar {
+    if is_quiet() {
+        return ProgressBar::hidden();
+    }
     let bar = ProgressBar::new_spinner();
     bar.set_style(
         ProgressStyle::with_template("{spinner:.cyan} {msg}")
@@ -131,6 +189,9 @@ pub fn spinner(message: &str) -> ProgressBar {
 
 /// Determinate progress bar.
 pub fn progress_bar(len: usize, message: &str) -> ProgressBar {
+    if is_quiet() {
+        return ProgressBar::hidden();
+    }
     let bar = ProgressBar::new(len as u64);
     bar.set_style(
         ProgressStyle::with_template("{msg} [{bar:40.cyan/blue}] {pos}/{len}")
@@ -246,14 +307,14 @@ pub fn print_plan(plan: &Plan, verbose: bool) {
         } else {
             format!("{folder}/")
         };
-        println!(
+        crate::out!(
             "  {:<16} {:>6}  {:>10}",
             style(label).green(),
             count,
             style(format_size(bytes)).dim()
         );
     }
-    println!(
+    crate::out!(
         "  {}",
         style(format!(
             "{} · {} total",
@@ -269,10 +330,10 @@ pub fn print_plan(plan: &Plan, verbose: bool) {
         PREVIEW_LIMIT.min(plan.moves.len())
     };
     if shown > 0 {
-        println!();
+        crate::out!();
     }
     for m in &plan.moves[..shown] {
-        println!(
+        crate::out!(
             "  {} {} {}",
             rel(&plan.root, &m.from),
             style("→").dim(),
@@ -298,7 +359,7 @@ pub fn print_skipped(root: &Path, skipped: &[Skipped], verbose: bool) {
     }
     heading("Left alone");
     for (label, entries) in groups {
-        println!(
+        crate::out!(
             "  {} {}",
             style(plural(entries.len(), "item")).yellow(),
             label

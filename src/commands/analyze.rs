@@ -7,6 +7,7 @@ use console::style;
 
 use crate::{
     analyze::{Analysis, AnalyzeOptions, DuplicateSummary, analyze},
+    api::Outcome,
     cli::AnalyzeArgs,
     commands::guard::Guard,
     dedupe::find_duplicates,
@@ -20,8 +21,11 @@ use crate::{
 
 const BAR_WIDTH: usize = 24;
 
-/// Analyzes each folder and prints a report (or JSON with `--json`).
-pub fn run(args: &AnalyzeArgs) -> Result<()> {
+/// Analyzes each folder and reports.
+///
+/// The analysis is the same value either way: printed as a report, or handed
+/// back under `detail` for the JSON envelope to carry.
+pub fn run(args: &AnalyzeArgs) -> Result<Outcome> {
     let options = AnalyzeOptions {
         top: args.top as usize,
         ..Default::default()
@@ -46,14 +50,14 @@ pub fn run(args: &AnalyzeArgs) -> Result<()> {
         reports.push(analysis);
     }
 
-    if args.json {
-        println!("{}", serde_json::to_string_pretty(&reports)?);
-    } else {
-        for report in &reports {
-            print_report(report);
-        }
+    for report in &reports {
+        print_report(report);
     }
-    Ok(())
+    Ok(Outcome {
+        roots: args.paths.iter().map(|p| p.display().to_string()).collect(),
+        detail: Some(serde_json::to_value(&reports)?),
+        ..Default::default()
+    })
 }
 
 /// Runs the duplicate pipeline over `root` and summarises the waste.
@@ -81,7 +85,7 @@ fn share(part: u64, whole: u64) -> f64 {
 fn print_report(a: &Analysis) {
     let root = Path::new(&a.root);
     ui::heading(&format!("Analysis of {}", a.root));
-    println!(
+    crate::out!(
         "  {} in {} · {}",
         ui::plural(a.files as usize, "file"),
         ui::plural(a.folders as usize, "folder"),
@@ -105,7 +109,7 @@ fn print_report(a: &Analysis) {
     }
     if let Some(disk) = &a.disk {
         let used = share(disk.used, disk.total);
-        println!(
+        crate::out!(
             "  Partition  {} {} used · {} of {} · {} free",
             ui::bar(used, BAR_WIDTH),
             ui::percent(used),
@@ -122,7 +126,7 @@ fn print_report(a: &Analysis) {
     ui::heading("By type");
     for c in &a.by_category {
         let part = share(c.bytes, a.bytes);
-        println!(
+        crate::out!(
             "  {:<14} {:>10}  {:>10}  {:>6}  {}",
             c.category,
             ui::plural(c.files as usize, "file"),
@@ -139,7 +143,7 @@ fn print_report(a: &Analysis) {
                 .modified
                 .map(|m| format_utc(m)[..10].to_string())
                 .unwrap_or_else(|| "unknown".into());
-            println!(
+            crate::out!(
                 "  {:>10}  {}  {}",
                 ui::format_size(f.bytes),
                 style(date).dim(),
@@ -150,7 +154,7 @@ fn print_report(a: &Analysis) {
     if !a.largest_folders.is_empty() {
         ui::heading("Largest folders");
         for f in &a.largest_folders {
-            println!(
+            crate::out!(
                 "  {:>10}  {:>10}  {}",
                 ui::format_size(f.bytes),
                 ui::plural(f.files as usize, "file"),
@@ -160,14 +164,14 @@ fn print_report(a: &Analysis) {
     }
     if a.project_count > 0 {
         ui::heading("Code projects");
-        println!(
+        crate::out!(
             "  {} using {} ({} of the total)",
             ui::plural(a.project_count as usize, "project"),
             ui::format_size(a.project_bytes),
             ui::percent(share(a.project_bytes, a.bytes))
         );
         for p in &a.largest_projects {
-            println!(
+            crate::out!(
                 "  {:>10}  {}",
                 ui::format_size(p.bytes),
                 ui::rel(root, Path::new(&p.path))
@@ -180,7 +184,7 @@ fn print_report(a: &Analysis) {
         if bucket.files == 0 {
             continue;
         }
-        println!(
+        crate::out!(
             "  {:<20} {:>10}  {:>10}  {}",
             bucket.label,
             ui::plural(bucket.files as usize, "file"),
@@ -194,7 +198,7 @@ fn print_report(a: &Analysis) {
         if d.groups == 0 {
             ui::success("No duplicate content found.");
         } else {
-            println!(
+            crate::out!(
                 "  {} in {} waste {}",
                 ui::plural(d.extra_copies, "extra copy"),
                 ui::plural(d.groups, "group"),

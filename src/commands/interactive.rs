@@ -6,6 +6,7 @@ use anyhow::{Result, bail};
 use dialoguer::{Confirm, Input, Select};
 
 use crate::{
+    api::Outcome,
     cli::{
         AnalyzeArgs, CompareArgs, DedupeArgs, DistributeArgs, HistoryArgs, OrganizeArgs, PurgeArgs,
         ReorganizeArgs,
@@ -42,7 +43,7 @@ const MENU: [&str; 12] = [
 ];
 
 /// Runs the interactive menu loop.
-pub fn run() -> Result<()> {
+pub fn run() -> Result<Outcome> {
     ui::banner();
     if !ui::is_interactive() {
         bail!("no command given and no interactive terminal available; see `tidy-up --help`");
@@ -50,7 +51,7 @@ pub fn run() -> Result<()> {
     let mut root = choose_folder()?;
     let mut session = Session::default();
     loop {
-        println!();
+        crate::out!();
         session.show();
         let pick = Select::new()
             .with_prompt(format!("What would you like to do in {}?", root.display()))
@@ -65,20 +66,21 @@ pub fn run() -> Result<()> {
             4 => analyze::run(&AnalyzeArgs {
                 paths: vec![root.clone()],
                 top: 10,
-                json: false,
                 duplicates: false,
-            }),
+            })
+            .map(|_| ()),
             5 => distribute_flow(&root, &session),
             6 => restore_flow(&root, &session),
-            7 => restore::history(&HistoryArgs { path: root.clone() }),
+            7 => restore::history(&HistoryArgs { path: root.clone() }).map(|_| ()),
             8 => dedupe::purge(&PurgeArgs {
                 path: root.to_path_buf(),
                 safety: session.safety.clone(),
                 yes: false,
-            }),
+            })
+            .map(|_| ()),
             9 => choose_folder().map(|new_root| root = new_root),
             10 => session.edit(),
-            _ => return Ok(()),
+            _ => return Ok(Outcome::default()),
         };
         if let Err(err) = outcome {
             ui::error(&err);
@@ -142,7 +144,7 @@ fn organize_flow(root: &Path, session: &Session) -> Result<()> {
         }
     };
 
-    organize::run(&OrganizeArgs {
+    let _outcome = organize::run(&OrganizeArgs {
         path: root.to_path_buf(),
         safety: session.safety.clone(),
         filter,
@@ -151,7 +153,8 @@ fn organize_flow(root: &Path, session: &Session) -> Result<()> {
         dry_run: session.dry_run,
         yes: false,
         verbose: session.verbose,
-    })
+    })?;
+    Ok(())
 }
 
 /// Asks how to group, then re-files the whole folder.
@@ -184,7 +187,7 @@ fn reorganize_flow(root: &Path, session: &Session) -> Result<()> {
             .default(true)
             .interact()?;
 
-    reorganize::run(&ReorganizeArgs {
+    let _outcome = reorganize::run(&ReorganizeArgs {
         path: root.to_path_buf(),
         by: CHOICES[pick].1.to_vec(),
         filter: session.filter.clone(),
@@ -195,7 +198,8 @@ fn reorganize_flow(root: &Path, session: &Session) -> Result<()> {
         dry_run: preview,
         yes: false,
         verbose: session.verbose,
-    })
+    })?;
+    Ok(())
 }
 
 fn dedupe_flow(root: &Path, session: &Session) -> Result<()> {
@@ -208,12 +212,13 @@ fn dedupe_flow(root: &Path, session: &Session) -> Result<()> {
         yes: false,
         verbose: session.verbose,
     })
+    .map(|_| ())
 }
 
 /// Asks where to move files to and how to split them, then runs `distribute` with `root`
 /// as the source.
 fn distribute_flow(root: &Path, session: &Session) -> Result<()> {
-    println!(
+    crate::out!(
         "Files will be moved OUT of {} into the folders you name.",
         root.display()
     );
@@ -305,11 +310,12 @@ fn distribute_flow(root: &Path, session: &Session) -> Result<()> {
         yes: false,
         verbose: session.verbose,
     })
+    .map(|_| ())
 }
 
 /// Collects extra folders to compare against `root` (which becomes the primary).
 fn compare_flow(root: &Path, session: &Session) -> Result<()> {
-    println!(
+    crate::out!(
         "{} is the primary folder: its copies are kept.",
         root.display()
     );
@@ -334,6 +340,7 @@ fn compare_flow(root: &Path, session: &Session) -> Result<()> {
         yes: false,
         verbose: session.verbose,
     })
+    .map(|_| ())
 }
 
 fn restore_flow(root: &Path, session: &Session) -> Result<()> {

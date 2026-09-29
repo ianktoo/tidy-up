@@ -18,9 +18,10 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 
 use crate::{
+    api::{ErrorCode, Refused},
     cli::{FilterArgs, SafetyArgs},
     fsops::resolve_root,
     obs,
@@ -129,20 +130,32 @@ impl Guard {
             return Ok(());
         }
 
+        // Refusals are typed, not merely worded, so the exit code and the JSON
+        // error code come from the reason rather than from matching prose.
         if assessment.risk == Risk::Dangerous {
             if !assessment.overridable() {
-                bail!(
-                    "refusing to change {}: tidy-up cannot write there, and {OVERRIDE_FLAG} \
-                     cannot grant permission the system refused",
-                    original.display()
-                );
+                return Err(Refused::at(
+                    ErrorCode::NotWritable,
+                    original,
+                    format!(
+                        "refusing to change {}: tidy-up cannot write there, and \
+                         {OVERRIDE_FLAG} cannot grant permission the system refused",
+                        original.display()
+                    ),
+                )
+                .into());
             }
             if !self.allow {
-                bail!(
-                    "refusing to change {}: it looks like a folder the system manages. \
-                     If you are certain, re-run with {OVERRIDE_FLAG}",
-                    original.display()
-                );
+                return Err(Refused::at(
+                    ErrorCode::SystemFolder,
+                    original,
+                    format!(
+                        "refusing to change {}: it looks like a folder the system manages. \
+                         If you are certain, re-run with {OVERRIDE_FLAG}",
+                        original.display()
+                    ),
+                )
+                .into());
             }
         }
 
@@ -152,7 +165,12 @@ impl Guard {
         };
         // Default no: a prompt this dangerous must never be answered by habit.
         if !ui::confirm(&prompt, false, self.assume_yes)? {
-            bail!("Cancelled. Nothing was changed.");
+            return Err(Refused::at(
+                ErrorCode::Cancelled,
+                original,
+                "Cancelled. Nothing was changed.",
+            )
+            .into());
         }
         Ok(())
     }

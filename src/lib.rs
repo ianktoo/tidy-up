@@ -17,6 +17,7 @@
 //! | observe | [`obs`] | a JSON Lines record of what a run decided |
 //! | undo | [`restore`] | reverse a journal |
 //! | present | [`cli`], [`commands`], [`ui`] | arguments, flows, terminal output |
+//! | report | [`api`] | the same values as JSON, plus exit codes and plan files |
 //!
 //! ```no_run
 //! use tidy_up::{
@@ -34,6 +35,7 @@
 //! ```
 
 pub mod analyze;
+pub mod api;
 pub mod category;
 pub mod cli;
 pub mod commands;
@@ -60,22 +62,54 @@ pub mod ui;
 
 use clap::Parser;
 
-/// Parses the process arguments and runs the requested command.
+/// Parses the process arguments, runs the requested command, and reports.
 ///
-/// The run log is opened here and closed here, so the closing event is written
-/// whatever the command did, including on the error path.
-pub fn run() -> anyhow::Result<()> {
+/// Everything that decides how the process ends lives here: which renderer
+/// gets the result, what the run log records, and what the exit code is. The
+/// commands themselves return an [`api::Outcome`] and print prose along the
+/// way; they do not decide any of that.
+pub fn run() -> api::Exit {
     let cli = cli::Cli::parse();
-    obs::start(cli.command_name(), cli.log);
+    let command = cli.command_name();
+    let (json, strict) = (cli.json, cli.strict);
+    // Decided before anything runs, because a half-silenced run would emit
+    // prose and JSON on the same stream.
+    ui::set_quiet(json);
+
+    obs::start(command, cli.log);
     let result = commands::dispatch(cli);
-    let status = match &result {
-        Ok(()) => obs::Status::Ok,
-        Err(e) if e.to_string().starts_with("Cancelled") => obs::Status::Cancelled,
-        Err(e) if e.to_string().starts_with("refusing") => obs::Status::Blocked,
-        Err(_) => obs::Status::Error,
+
+    let (status, exit) = match &result {
+        Ok(outcome) if strict && outcome.had_problems() => (obs::Status::Ok, api::Exit::Skipped),
+        Ok(_) => (obs::Status::Ok, api::Exit::Ok),
+        Err(error) => {
+            let code = api::classify(error).code;
+            let status = match code {
+                api::ErrorCode::Cancelled => obs::Status::Cancelled,
+                api::ErrorCode::SystemFolder | api::ErrorCode::NotWritable => obs::Status::Blocked,
+                _ => obs::Status::Error,
+            };
+            (status, code.exit())
+        }
     };
-    if let Some(path) = obs::finish(status) {
-        ui::hint(&format!("Run log: {}", path.display()));
+
+    let log_path = obs::finish(status);
+
+    match (&result, json) {
+        (Ok(outcome), true) => api::Envelope::ok(command, outcome.clone()).print(),
+        (Err(error), true) => api::Envelope::from_error(command, error).print(),
+        (Ok(_), false) => {
+            if let Some(path) = log_path {
+                ui::hint(&format!("Run log: {}", path.display()));
+            }
+        }
+        (Err(error), false) => {
+            // A cancelled run is the user getting what they asked for, and the
+            // command has already said so in its own words.
+            if api::classify(error).code != api::ErrorCode::Cancelled {
+                ui::error(error);
+            }
+        }
     }
-    result
+    exit
 }
