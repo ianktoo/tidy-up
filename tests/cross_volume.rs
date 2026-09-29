@@ -237,7 +237,12 @@ fn distribute_across_real_volumes_frees_the_source_partition_and_restores_exactl
     let restored = restore(
         &dests[0],
         &mut journal,
-        RestoreOptions::default(),
+        RestoreOptions {
+            // distribute moved files in from another volume, so the journal
+            // names them absolutely, outside the folder being restored.
+            allow_outside: true,
+            ..RestoreOptions::default()
+        },
         |_, _| {},
     )
     .unwrap();
